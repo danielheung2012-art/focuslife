@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FocusLife Online</title>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import {
@@ -15,13 +13,11 @@ import {
   addDoc,
   onSnapshot,
   query,
-  where,
   orderBy,
   serverTimestamp,
   doc,
   updateDoc,
-  deleteDoc,
-  getDocs
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -36,19 +32,7 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-function todayString() {
-  return new Date().toISOString().split("T")[0];
-}
-
-function getLast7Days() {
-  const days = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    days.push(d.toISOString().split("T")[0]);
-  }
-  return days;
-}
+const categories = ["工作", "學習", "運動", "自我成長", "生活", "嗜好小組", "其他"];
 
 window.addTask = async function() {
   const title = document.getElementById("taskInput").value.trim();
@@ -59,7 +43,6 @@ window.addTask = async function() {
     title,
     category,
     completed: false,
-    date: todayString(),
     created: serverTimestamp()
   });
 
@@ -76,85 +59,61 @@ window.deleteTask = async function(id) {
   await deleteDoc(doc(db, "tasks", id));
 };
 
-function loadTodayTasks() {
-  const q = query(
-    collection(db, "tasks"),
-    where("date", "==", todayString()),
-    orderBy("created")
-  );
+function loadAllTasks() {
+  const q = query(collection(db, "tasks"), orderBy("created"));
 
   onSnapshot(q, (snapshot) => {
-    const list = document.getElementById("taskList");
-    list.innerHTML = "";
+    const container = document.getElementById("taskContainer");
+    container.innerHTML = "";
+
+    const grouped = {};
+
+    categories.forEach(cat => grouped[cat] = []);
 
     snapshot.forEach((docItem) => {
       const data = docItem.data();
-      const li = document.createElement("li");
-      li.innerHTML = `
-        <input type="checkbox" ${data.completed ? "checked" : ""}
-          onchange="toggleTask('${docItem.id}', ${data.completed})">
-        <span style="text-decoration:${data.completed ? "line-through" : "none"}">
-          ${data.title} (${data.category})
-        </span>
-        <button onclick="deleteTask('${docItem.id}')">❌</button>
-      `;
-      list.appendChild(li);
+      if (!grouped[data.category]) {
+        grouped[data.category] = [];
+      }
+      grouped[data.category].push({ id: docItem.id, ...data });
     });
+
+    for (let cat of categories) {
+      if (grouped[cat].length === 0) continue;
+
+      const section = document.createElement("div");
+      section.innerHTML = `<h3>📂 ${cat}</h3>`;
+      
+      const ul = document.createElement("ul");
+
+      grouped[cat].forEach(task => {
+        const li = document.createElement("li");
+        li.innerHTML = `
+          <input type="checkbox" ${task.completed ? "checked" : ""}
+            onchange="toggleTask('${task.id}', ${task.completed})">
+          <span style="text-decoration:${task.completed ? "line-through" : "none"}">
+            ${task.title}
+          </span>
+          <button onclick="deleteTask('${task.id}')">❌</button>
+        `;
+        ul.appendChild(li);
+      });
+
+      section.appendChild(ul);
+      container.appendChild(section);
+    }
   });
 }
 
-let chart;
-
-window.loadWeeklyStats = async function() {
-  const selectedCategory = document.getElementById("filterCategory").value;
-  const last7Days = getLast7Days();
-  const results = [];
-
-  for (let day of last7Days) {
-    let q = query(
-      collection(db, "tasks"),
-      where("date", "==", day),
-      where("completed", "==", true)
-    );
-
-    if (selectedCategory !== "全部") {
-      q = query(
-        collection(db, "tasks"),
-        where("date", "==", day),
-        where("completed", "==", true),
-        where("category", "==", selectedCategory)
-      );
-    }
-
-    const snapshot = await getDocs(q);
-    results.push(snapshot.size);
-  }
-
-  if (chart) chart.destroy();
-
-  const ctx = document.getElementById("weeklyChart");
-  chart = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels: last7Days,
-      datasets: [{
-        label: "完成數量",
-        data: results,
-        backgroundColor: "#2563eb"
-      }]
-    }
-  });
-};
-
-loadTodayTasks();
+loadAllTasks();
 </script>
 
 <style>
 body { font-family: Arial; padding: 20px; background: #f4f6f9; }
 input, select, button { padding: 8px; margin: 5px 0; }
 button { background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
-li { margin: 8px 0; }
-canvas { margin-top: 20px; }
+li { margin: 6px 0; }
+h3 { margin-top: 20px; }
 </style>
 </head>
 
@@ -163,7 +122,7 @@ canvas { margin-top: 20px; }
 <h2>🌿 FocusLife Online</h2>
 
 <h3>新增任務</h3>
-<input id="taskInput" placeholder="輸入今日任務">
+<input id="taskInput" placeholder="輸入任務">
 
 <select id="categorySelect">
   <option>工作</option>
@@ -171,30 +130,16 @@ canvas { margin-top: 20px; }
   <option>運動</option>
   <option>自我成長</option>
   <option>生活</option>
+  <option>嗜好小組</option>
   <option>其他</option>
 </select>
 
 <button onclick="addTask()">新增任務</button>
 
-<ul id="taskList"></ul>
-
 <hr>
 
-<h3>📊 每週統計</h3>
-
-<select id="filterCategory">
-  <option>全部</option>
-  <option>工作</option>
-  <option>學習</option>
-  <option>運動</option>
-  <option>自我成長</option>
-  <option>生活</option>
-  <option>其他</option>
-</select>
-
-<button onclick="loadWeeklyStats()">查看統計</button>
-
-<canvas id="weeklyChart"></canvas>
+<h2>📋 任務清單（分類顯示）</h2>
+<div id="taskContainer"></div>
 
 </body>
 </html>
