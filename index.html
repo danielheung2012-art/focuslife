@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.3</title>
+<title>FocusLife v17.4</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -17,7 +17,8 @@ import {
   doc,
   updateDoc,
   deleteDoc,
-  serverTimestamp
+  serverTimestamp,
+  getDocs
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -43,7 +44,7 @@ let currentCategory = "全部";
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 
-/* ---------- 分類雲端同步 ---------- */
+/* ---------- 分類 ---------- */
 
 function loadCategories(){
   onSnapshot(collection(db,"categories"), snap=>{
@@ -64,8 +65,23 @@ window.addCategory = async function(){
   document.getElementById("newCategory").value="";
 };
 
-window.deleteCategory = async function(id){
+window.deleteCategory = async function(id,name){
+
+  // 將任務改為未分類
+  const tasksSnap = await getDocs(collection(db,"tasks"));
+  for(const t of tasksSnap.docs){
+    if(t.data().category===name){
+      await updateDoc(doc(db,"tasks",t.id),{
+        category:"未分類"
+      });
+    }
+  }
+
   await deleteDoc(doc(db,"categories",id));
+
+  if(currentCategory===name){
+    currentCategory="全部";
+  }
 };
 
 window.changeCategory=function(cat){
@@ -79,7 +95,7 @@ function renderCategoryUI(){
   const sel=document.getElementById("categorySelect");
 
   container.innerHTML="";
-  sel.innerHTML="";
+  sel.innerHTML=`<option>未分類</option>`;
 
   // 全部
   container.innerHTML+=`
@@ -87,11 +103,18 @@ function renderCategoryUI(){
       onclick="changeCategory('全部')">全部</div>
   `;
 
+  // 未分類
+  container.innerHTML+=`
+    <div class="cat-item ${currentCategory==="未分類"?"active":""}"
+      onclick="changeCategory('未分類')">未分類</div>
+  `;
+
   state.categories.forEach(cat=>{
     container.innerHTML+=`
-      <div class="cat-item ${currentCategory===cat.name?"active":""}"
-        onclick="changeCategory('${cat.name}')">
-        ${cat.name}
+      <div class="cat-item ${currentCategory===cat.name?"active":""}">
+        <span onclick="changeCategory('${cat.name}')">${cat.name}</span>
+        <span class="delete-btn"
+          onclick="deleteCategory('${cat.id}','${cat.name}')">✕</span>
       </div>
     `;
     sel.innerHTML+=`<option>${cat.name}</option>`;
@@ -118,7 +141,7 @@ window.addTask = async function(title,dueDate){
   await addDoc(collection(db,"tasks"),{
     title:taskTitle,
     dueDate:taskDue||"",
-    category,
+    category:category||"未分類",
     note:"",
     completed:false,
     order:Date.now(),
@@ -126,7 +149,6 @@ window.addTask = async function(title,dueDate){
   });
 
   document.getElementById("taskInput").value="";
-  closeCalendarModal();
 };
 
 window.toggleTask = async function(task){
@@ -194,44 +216,6 @@ function renderTasks(){
   });
 }
 
-/* ---------- 月曆 ---------- */
-
-window.changeMonth=function(offset){
-  currentMonth+=offset;
-  if(currentMonth<0){currentMonth=11;currentYear--;}
-  if(currentMonth>11){currentMonth=0;currentYear++;}
-  renderCalendar();
-};
-
-function renderCalendar(){
-  const cal=document.getElementById("calendarContainer");
-  const title=document.getElementById("calendarTitle");
-  cal.innerHTML="";
-  title.innerText=`${currentYear} 年 ${currentMonth+1} 月`;
-
-  const first=new Date(currentYear,currentMonth,1).getDay();
-  const days=new Date(currentYear,currentMonth+1,0).getDate();
-  const weekdays=["日","一","二","三","四","五","六"];
-
-  weekdays.forEach(d=>cal.innerHTML+=`<div class="weekday">${d}</div>`);
-
-  for(let i=0;i<first;i++) cal.innerHTML+="<div></div>";
-
-  for(let d=1;d<=days;d++){
-    const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
-    const isToday=dateStr===today;
-
-    cal.innerHTML+=`
-      <div class="calendar-day ${isToday?"today":""}"
-        onclick="openCalendarModal('${dateStr}')">
-        ${d}
-        ${hasTask?`<div class="task-dot"></div>`:""}
-      </div>
-    `;
-  }
-}
-
 /* ---------- 初始化 ---------- */
 
 loadCategories();
@@ -258,11 +242,20 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
   font-size:14px;
   cursor:pointer;
   white-space:nowrap;
+  display:flex;
+  align-items:center;
+  gap:6px;
 }
 
 .cat-item.active{
   background:#2563eb;
   color:white;
+}
+
+.delete-btn{
+  font-size:12px;
+  opacity:0.6;
+  cursor:pointer;
 }
 
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
@@ -273,12 +266,6 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 .icon-btn{background:none;border:none;font-size:14px;cursor:pointer;opacity:0.6;}
 .icon-btn:hover{opacity:1;}
 .note-box textarea{width:100%;margin-top:6px;background:#f2f2f2;border:none;padding:6px;border-radius:8px;}
-
-.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
-.weekday{text-align:center;font-size:12px;color:#666;}
-.calendar-day{position:relative;background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
-.today{background:#2563eb;color:white;}
-.task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;position:absolute;bottom:4px;left:4px;}
 </style>
 </head>
 
@@ -297,12 +284,6 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 <button onclick="addTask()">新增</button>
 
 <div id="tasksContainer"></div>
-
-<h3>📅 月曆</h3>
-<button onclick="changeMonth(-1)">‹</button>
-<span id="calendarTitle"></span>
-<button onclick="changeMonth(1)">›</button>
-<div class="calendar" id="calendarContainer"></div>
 
 </body>
 </html>
