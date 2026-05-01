@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v9</title>
+<title>FocusLife v9.1</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -36,17 +36,14 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 let categories = [];
-let focusMode = false;
 
-/* ------------------ 分類 ------------------ */
+async function loadCategories(){
+  const snapshot = await getDocs(collection(db,"categories"));
+  categories = snapshot.docs.map(doc=>doc.data().name);
 
-async function loadCategories() {
-  const snapshot = await getDocs(collection(db, "categories"));
-  categories = snapshot.docs.map(doc => doc.data().name);
-
-  if (categories.length === 0) {
-    categories = ["工作","學習","運動","生活","嗜好小組"];
-    for (let cat of categories) {
+  if(categories.length===0){
+    categories=["工作","學習","運動","生活","嗜好小組"];
+    for(let cat of categories){
       await addDoc(collection(db,"categories"),{name:cat});
     }
   }
@@ -54,7 +51,7 @@ async function loadCategories() {
 }
 
 function renderCategoryOptions(){
-  const select = document.getElementById("categorySelect");
+  const select=document.getElementById("categorySelect");
   select.innerHTML="";
   categories.forEach(cat=>{
     const option=document.createElement("option");
@@ -64,14 +61,11 @@ function renderCategoryOptions(){
   });
 }
 
-/* ------------------ 新增任務 ------------------ */
-
-window.addTask = async function(){
+window.addTask=async function(){
   const title=document.getElementById("taskInput").value.trim();
   const category=document.getElementById("categorySelect").value;
   const priority=document.getElementById("prioritySelect").value;
   const dueDate=document.getElementById("dueDateInput").value || null;
-
   if(!title) return;
 
   await addDoc(collection(db,"tasks"),{
@@ -88,15 +82,6 @@ window.addTask = async function(){
   document.getElementById("taskInput").value="";
 };
 
-/* Enter 快速新增 */
-document.addEventListener("keydown",e=>{
-  if(e.key==="Enter" && document.activeElement.id==="taskInput"){
-    addTask();
-  }
-});
-
-/* ------------------ 任務操作 ------------------ */
-
 window.toggleTask=async(id,current)=>{
   await updateDoc(doc(db,"tasks",id),{completed:!current});
 };
@@ -109,22 +94,13 @@ window.togglePin=async(id,current)=>{
   await updateDoc(doc(db,"tasks",id),{pinned:!current});
 };
 
-/* ------------------ 今日專注模式 ------------------ */
-
-window.toggleFocusMode=function(){
-  focusMode=!focusMode;
-  document.getElementById("focusBtn").innerText=
-    focusMode?"🔙 返回全部":"🎯 今日專注";
-};
-
-/* ------------------ 渲染任務 ------------------ */
-
 function loadTasks(){
-  const q=query(collection(db,"tasks"),orderBy("created"));
+  const q=query(collection(db,"tasks"),orderBy("order"));
 
   onSnapshot(q,(snapshot)=>{
     const container=document.getElementById("taskContainer");
     container.innerHTML="";
+
     const grouped={};
     categories.forEach(cat=>grouped[cat]={todo:[],done:[]});
 
@@ -133,44 +109,29 @@ function loadTasks(){
       if(!grouped[data.category]) return;
 
       const task={id:docItem.id,...data};
-
-      if(focusMode){
-        const today=new Date().toISOString().split("T")[0];
-        if(!(task.pinned || task.priority==="高" || task.dueDate===today)){
-          return;
-        }
-      }
-
-      if(task.completed){
-        grouped[data.category].done.push(task);
-      }else{
-        grouped[data.category].todo.push(task);
-      }
+      if(task.completed) grouped[data.category].done.push(task);
+      else grouped[data.category].todo.push(task);
     });
 
     for(let cat of categories){
+      if(grouped[cat].todo.length===0 && grouped[cat].done.length===0) continue;
+
       const section=document.createElement("div");
-      section.innerHTML=`<h3>📂 ${cat}</h3>`;
+      section.className="category-card";
+      section.innerHTML=`<h3>${cat}</h3>`;
 
       /* 未完成 */
       const todoList=document.createElement("ul");
-      grouped[cat].todo
-        .sort((a,b)=>{
-          if(a.pinned!==b.pinned) return b.pinned-a.pinned;
-          if(a.priority!==b.priority){
-            const p={"高":3,"中":2,"低":1};
-            return p[b.priority]-p[a.priority];
-          }
-          if(a.dueDate && b.dueDate){
-            return new Date(a.dueDate)-new Date(b.dueDate);
-          }
-          return a.order-b.order;
-        })
-        .forEach(task=>{
-          todoList.appendChild(createTaskElement(task,false));
-        });
+      todoList.className="task-list";
 
-      /* 拖動排序 */
+      /* 置頂任務 */
+      const pinned=grouped[cat].todo.filter(t=>t.pinned);
+      const normal=grouped[cat].todo.filter(t=>!t.pinned);
+
+      [...pinned,...normal].forEach(task=>{
+        todoList.appendChild(createTaskElement(task,false));
+      });
+
       new Sortable(todoList,{
         animation:150,
         onEnd:async function(){
@@ -184,11 +145,14 @@ function loadTasks(){
 
       section.appendChild(todoList);
 
-      /* 已完成區 */
+      /* 已完成 */
       if(grouped[cat].done.length>0){
-        const doneTitle=document.createElement("h4");
-        doneTitle.innerText="✅ 已完成（點擊收合）";
+        const doneTitle=document.createElement("div");
+        doneTitle.className="done-title";
+        doneTitle.innerText="✅ 已完成（點擊展開）";
+
         const doneList=document.createElement("ul");
+        doneList.className="task-list";
         doneList.style.display="none";
 
         doneTitle.onclick=()=>{
@@ -209,58 +173,111 @@ function loadTasks(){
   });
 }
 
-/* 建立任務元素 */
 function createTaskElement(task,isDone){
   const li=document.createElement("li");
+  li.className="task-card";
   li.dataset.id=task.id;
 
   let dueText="";
   if(task.dueDate){
     const today=new Date().toISOString().split("T")[0];
-    if(task.dueDate<today) dueText=`<span style="color:red">📅 ${task.dueDate}</span>`;
-    else if(task.dueDate===today) dueText=`<span style="color:orange">📅 ${task.dueDate}</span>`;
-    else dueText=`<span style="color:green">📅 ${task.dueDate}</span>`;
+    if(task.dueDate<today) dueText=`<span class="due overdue">📅 ${task.dueDate}</span>`;
+    else if(task.dueDate===today) dueText=`<span class="due today">📅 ${task.dueDate}</span>`;
+    else dueText=`<span class="due future">📅 ${task.dueDate}</span>`;
   }
 
   li.innerHTML=`
-    <input type="checkbox" ${task.completed?"checked":""}
-      onchange="toggleTask('${task.id}',${task.completed})">
-    <span style="text-decoration:${task.completed?"line-through":"none"}">
-      ${task.title} (${task.priority})
-    </span>
-    ${dueText}
-    <button onclick="togglePin('${task.id}',${task.pinned})">
-      ${task.pinned?"📌":"📍"}
-    </button>
-    <button onclick="deleteTask('${task.id}')">❌</button>
+    <div class="task-main">
+      <input type="checkbox" ${task.completed?"checked":""}
+        onchange="toggleTask('${task.id}',${task.completed})">
+      <span class="${task.completed?"completed":""}">
+        ${task.title}
+      </span>
+      <span class="priority">${task.priority}</span>
+      ${dueText}
+    </div>
+    <div>
+      <button onclick="togglePin('${task.id}',${task.pinned})">
+        ${task.pinned?"📌":"📍"}
+      </button>
+      <button onclick="deleteTask('${task.id}')">❌</button>
+    </div>
   `;
-
   return li;
 }
 
-/* 初始化 */
 async function init(){
   await loadCategories();
   loadTasks();
 }
 init();
-
 </script>
 
 <style>
-body{font-family:Arial;padding:20px;background:#f4f6f9;}
-input,select,button{padding:6px;margin:5px;}
-button{background:#2563eb;color:white;border:none;border-radius:4px;}
-li{margin:8px 0;}
-h3{margin-top:25px;}
+body{
+  font-family:Arial;
+  background:#f3f4f6;
+  padding:20px;
+}
+
+.category-card{
+  background:white;
+  padding:15px;
+  border-radius:12px;
+  margin-bottom:20px;
+  box-shadow:0 4px 12px rgba(0,0,0,0.05);
+}
+
+.task-list{
+  list-style:none;
+  padding:0;
+}
+
+.task-card{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  background:#f9fafb;
+  margin:8px 0;
+  padding:10px;
+  border-radius:8px;
+  cursor:grab;
+}
+
+.task-main{
+  display:flex;
+  align-items:center;
+  gap:8px;
+}
+
+.completed{
+  text-decoration:line-through;
+  color:#999;
+}
+
+.priority{
+  font-size:12px;
+  padding:2px 6px;
+  border-radius:4px;
+  background:#e5e7eb;
+}
+
+.due.overdue{color:red;}
+.due.today{color:orange;}
+.due.future{color:green;}
+
+.done-title{
+  margin-top:10px;
+  font-size:14px;
+  cursor:pointer;
+  color:#555;
+}
 </style>
 </head>
 
 <body>
 
-<h2>🌿 FocusLife v9</h2>
-
-<button id="focusBtn" onclick="toggleFocusMode()">🎯 今日專注</button>
+<h2>🌿 FocusLife v9.1</h2>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="輸入任務">
@@ -271,7 +288,7 @@ h3{margin-top:25px;}
   <option value="低">🟢 低</option>
 </select>
 <input type="date" id="dueDateInput">
-<button onclick="addTask()">新增任務</button>
+<button onclick="addTask()">新增</button>
 
 <hr>
 <div id="taskContainer"></div>
