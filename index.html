@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v16</title>
+<title>FocusLife v16.1</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -20,31 +20,31 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
-/* ---------------- Firebase ---------------- */
+/* ---------- Firebase（保留你的原設定） ---------- */
 
 const firebaseConfig = {
-  apiKey: "YOUR_KEY",
-  authDomain: "YOUR_DOMAIN",
-  projectId: "YOUR_PROJECT"
+  apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
+  authDomain: "focuslife-app-eeba5.firebaseapp.com",
+  projectId: "focuslife-app-eeba5"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-/* ---------------- 香港時間 ---------------- */
+/* ---------- 香港時間 ---------- */
 
 function getHKToday(){
   return new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Hong_Kong"});
 }
 const today = getHKToday();
 
-/* ---------------- State ---------------- */
+/* ---------- State ---------- */
 
 const state = { tasks: [] };
 let currentYear = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",year:"numeric"});
 let currentMonth = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",month:"numeric"})-1;
 
-/* ---------------- Data ---------------- */
+/* ---------- 資料載入 ---------- */
 
 function loadData(){
   onSnapshot(collection(db,"tasks"), snap=>{
@@ -54,25 +54,24 @@ function loadData(){
   });
 }
 
-/* ---------------- Task ---------------- */
+/* ---------- 任務 ---------- */
 
 window.addTask = async function(title, dueDate){
-  const input = document.getElementById("taskInput");
-  const taskTitle = title || input.value.trim();
+  const taskTitle = title || document.getElementById("taskInput").value.trim();
   const taskDue = dueDate || document.getElementById("taskDue").value;
 
   if(!taskTitle) return;
 
   await addDoc(collection(db,"tasks"),{
     title:taskTitle,
-    dueDate:taskDue,
+    dueDate:taskDue || "",
     note:"",
     completed:false,
     order:Date.now(),
     created:serverTimestamp()
   });
 
-  input.value="";
+  document.getElementById("taskInput").value="";
   closeCalendarModal();
 };
 
@@ -100,7 +99,7 @@ function renderTasks(){
   const container=document.getElementById("tasksContainer");
   container.innerHTML="";
 
-  const sorted = state.tasks.sort((a,b)=>{
+  const sorted = [...state.tasks].sort((a,b)=>{
     if(a.completed!==b.completed) return a.completed-b.completed;
     return (a.order||0)-(b.order||0);
   });
@@ -140,7 +139,7 @@ function renderTasks(){
   });
 }
 
-/* ---------------- Calendar ---------------- */
+/* ---------- 月曆 ---------- */
 
 window.changeMonth=function(offset){
   currentMonth+=offset;
@@ -174,7 +173,7 @@ function renderCalendar(){
   }
 }
 
-/* ---------------- Calendar Modal ---------------- */
+/* ---------- 月曆新增任務浮層 ---------- */
 
 window.openCalendarModal=function(date){
   document.getElementById("modalDate").innerText=date;
@@ -193,7 +192,7 @@ window.addFromCalendar=function(){
   document.getElementById("modalInput").value="";
 };
 
-/* ---------------- Init ---------------- */
+/* ---------- 初始化 ---------- */
 
 loadData();
 </script>
@@ -203,19 +202,18 @@ body{
   font-family:Arial;
   background:#f6f7f9;
   padding:20px;
-  margin-bottom:60px;
 }
 
-/* 金句 */
+/* 金句放大 */
 .quote{
   text-align:center;
-  font-size:22px;
+  font-size:24px;
   font-weight:600;
-  margin:40px 0;
+  margin:50px 0;
   color:#444;
 }
 
-/* 任務 */
+/* 任務卡片 */
 .task-card{
   background:white;
   padding:14px;
@@ -250,17 +248,13 @@ body{
 .icon-btn{
   background:none;
   border:none;
-  font-size:14px;
+  font-size:13px;
   cursor:pointer;
-  opacity:0.6;
+  opacity:0.5;
 }
 
 .icon-btn:hover{
   opacity:1;
-}
-
-.delete{
-  font-size:13px;
 }
 
 .note-box{
