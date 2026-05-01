@@ -7,14 +7,17 @@
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
-import { 
+import {
   getFirestore,
   collection,
   addDoc,
   onSnapshot,
   query,
   orderBy,
-  serverTimestamp
+  serverTimestamp,
+  doc,
+  updateDoc,
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -37,10 +40,23 @@ window.addTask = async function() {
 
   await addDoc(collection(db, "tasks"), {
     title: title,
+    completed: false,
     created: serverTimestamp()
   });
 
   input.value = "";
+};
+
+/* 勾選完成 */
+window.toggleTask = async function(id, currentStatus) {
+  await updateDoc(doc(db, "tasks", id), {
+    completed: !currentStatus
+  });
+};
+
+/* 刪除任務 */
+window.deleteTask = async function(id) {
+  await deleteDoc(doc(db, "tasks", id));
 };
 
 /* 即時同步 */
@@ -49,9 +65,20 @@ const q = query(collection(db, "tasks"), orderBy("created"));
 onSnapshot(q, (snapshot) => {
   const list = document.getElementById("taskList");
   list.innerHTML = "";
-  snapshot.forEach((doc) => {
+
+  snapshot.forEach((docItem) => {
+    const data = docItem.data();
     const li = document.createElement("li");
-    li.textContent = doc.data().title;
+
+    li.innerHTML = `
+      <input type="checkbox" ${data.completed ? "checked" : ""} 
+        onchange="toggleTask('${docItem.id}', ${data.completed})">
+      <span style="text-decoration:${data.completed ? "line-through" : "none"}">
+        ${data.title}
+      </span>
+      <button onclick="deleteTask('${docItem.id}')">❌</button>
+    `;
+
     list.appendChild(li);
   });
 });
@@ -64,7 +91,7 @@ body {
   background: #f4f6f9;
 }
 
-input, button {
+input[type="text"], button {
   padding: 8px;
   margin: 5px 0;
 }
@@ -74,6 +101,11 @@ button {
   color: white;
   border: none;
   border-radius: 4px;
+  cursor: pointer;
+}
+
+li {
+  margin: 8px 0;
 }
 </style>
 </head>
