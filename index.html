@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v14</title>
+<title>FocusLife v15</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -14,11 +14,10 @@ import {
   collection,
   addDoc,
   onSnapshot,
-  query,
-  serverTimestamp,
   doc,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 /* ---------------- Firebase ---------------- */
@@ -32,22 +31,35 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+/* ---------------- 香港時間 ---------------- */
+
+function getHKToday(){
+  return new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Hong_Kong"});
+}
+const today = getHKToday();
+
 /* ---------------- 全域狀態 ---------------- */
 
-const state = { tasks: [], habits: [] };
+const state = {
+  tasks: [],
+  habits: [],
+  categories: ["工作","學習","運動","生活"]
+};
+
 let currentCategory = "全部";
-const today = new Date().toISOString().split("T")[0];
+let currentYear = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",year:"numeric"});
+let currentMonth = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",month:"numeric"})-1;
 
 /* ---------------- 載入資料 ---------------- */
 
 function loadData(){
-  onSnapshot(collection(db,"tasks"), snapshot=>{
-    state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+  onSnapshot(collection(db,"tasks"), snap=>{
+    state.tasks = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
 
-  onSnapshot(collection(db,"habits"), snapshot=>{
-    state.habits = snapshot.docs.map(d=>({id:d.id,...d.data()}));
+  onSnapshot(collection(db,"habits"), snap=>{
+    state.habits = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
 }
@@ -55,44 +67,27 @@ function loadData(){
 /* ---------------- 渲染入口 ---------------- */
 
 function renderAll(){
-  renderDashboard();
   renderTasks();
-  renderCompleted();
-  renderHabits();
   renderCalendar();
+  renderCategoryUI();
 }
 
-/* ---------------- Dashboard ---------------- */
-
-function renderDashboard(){
-  const active = state.tasks.filter(t=>!t.completed);
-  const completed = state.tasks.filter(t=>t.completed);
-
-  document.getElementById("statTasks").innerText = active.length;
-  document.getElementById("statCompleted").innerText = completed.length;
-
-  document.getElementById("todayFocus").innerHTML =
-    active.slice(0,3).map(t=>`<div class="card">${t.title}</div>`).join("");
-}
-
-/* ---------------- 任務系統 ---------------- */
+/* ---------------- 任務 ---------------- */
 
 window.addTask = async function(){
-  const title = document.getElementById("taskInput").value.trim();
-  const note = document.getElementById("taskNote").value.trim();
-  const category = document.getElementById("categorySelect").value;
-  const dueDate = document.getElementById("taskDue").value;
+  const title=taskInput.value.trim();
+  const note=taskNote.value.trim();
+  const due=taskDue.value;
+  const category=categorySelect.value;
 
   if(!title) return;
 
   await addDoc(collection(db,"tasks"),{
-    title,
-    note,
+    title,note,dueDate:due,
     category,
-    dueDate,
-    pinned:false,
     completed:false,
-    order: Date.now(),
+    pinned:false,
+    order:Date.now(),
     created:serverTimestamp()
   });
 
@@ -101,168 +96,134 @@ window.addTask = async function(){
   taskDue.value="";
 };
 
-window.toggleTask = async (task)=>{
+window.toggleTask = async function(task){
   await updateDoc(doc(db,"tasks",task.id),{
     completed:!task.completed
   });
 };
 
-window.togglePin = async (task)=>{
+window.togglePin = async function(task){
   await updateDoc(doc(db,"tasks",task.id),{
     pinned:!task.pinned
   });
 };
 
-window.deleteTask = async (id)=>
+window.deleteTask = async id=>{
   await deleteDoc(doc(db,"tasks",id));
+};
 
 window.saveNote = async function(id){
-  const value = document.getElementById("note-input-"+id).value;
-  await updateDoc(doc(db,"tasks",id),{note:value});
+  const val=document.getElementById("note-"+id).value;
+  await updateDoc(doc(db,"tasks",id),{note:val});
 };
 
 window.changeCategory = function(cat){
-  currentCategory = cat;
+  currentCategory=cat;
   renderTasks();
-};
-
-window.toggleNote = function(id){
-  const el=document.getElementById("note-"+id);
-  el.style.display = el.style.display==="block"?"none":"block";
 };
 
 function renderTasks(){
   const container=document.getElementById("tasksContainer");
   container.innerHTML="";
 
-  const tasks = state.tasks
-    .filter(t=>!t.completed)
+  const filtered = state.tasks
     .filter(t=>currentCategory==="全部"||t.category===currentCategory)
     .sort((a,b)=>{
+      if(a.completed!==b.completed) return a.completed-b.completed;
       if(a.pinned!==b.pinned) return b.pinned-a.pinned;
       return (a.order||0)-(b.order||0);
     });
 
-  tasks.forEach(task=>{
+  filtered.forEach(task=>{
+    const overdue = task.dueDate && task.dueDate<today && !task.completed;
+
     container.innerHTML+=`
-      <div class="card ${task.pinned?"pinned":""}" data-id="${task.id}">
+      <div class="card ${task.completed?"completed":""} ${task.pinned?"pinned":""}">
         <div class="task-row">
           <div>
-            <input type="checkbox" onchange='toggleTask(${JSON.stringify(task)})'>
+            <input type="checkbox" ${task.completed?"checked":""}
+              onchange='toggleTask(${JSON.stringify(task)})'>
             ${task.title}
-            ${task.dueDate?`<span class="due">📅 ${task.dueDate}</span>`:""}
+            ${task.dueDate?`<span class="due ${overdue?"overdue":""}">📅 ${task.dueDate}</span>`:""}
           </div>
           <div>
             <button onclick='togglePin(${JSON.stringify(task)})'>📌</button>
-            <button onclick="toggleNote('${task.id}')">📝</button>
             <button onclick="deleteTask('${task.id}')">❌</button>
           </div>
         </div>
-        <div id="note-${task.id}" class="note">
-          <textarea id="note-input-${task.id}" class="note-input">${task.note||""}</textarea>
-          <button onclick="saveNote('${task.id}')">💾</button>
-        </div>
+        <textarea id="note-${task.id}" class="note-input"
+          onchange="saveNote('${task.id}')">${task.note||""}</textarea>
       </div>
     `;
   });
 
   new Sortable(container,{
     animation:150,
-    onEnd: async function(){
-      const items = container.children;
+    onEnd:async function(){
+      const items=container.children;
       for(let i=0;i<items.length;i++){
-        const id = items[i].dataset.id;
-        await updateDoc(doc(db,"tasks",id),{order:i});
+        await updateDoc(doc(db,"tasks",items[i].dataset.id),{order:i});
       }
     }
   });
 }
 
-/* ---------------- 已完成頁面 ---------------- */
+/* ---------------- 分類管理 ---------------- */
 
-function renderCompleted(){
-  const container=document.getElementById("completedContainer");
-  container.innerHTML="";
-
-  state.tasks.filter(t=>t.completed)
-  .forEach(task=>{
-    container.innerHTML+=`
-      <div class="card completed">
-        ✅ ${task.title}
-      </div>
-    `;
-  });
-}
-
-/* ---------------- 習慣 ---------------- */
-
-window.addHabit = async function(){
-  const title=habitInput.value.trim();
-  if(!title) return;
-
-  await addDoc(collection(db,"habits"),{
-    title,
-    streak:0,
-    lastCompletedDate:null,
-    createdAt:serverTimestamp()
-  });
-
-  habitInput.value="";
+window.addCategory=function(){
+  const val=newCategory.value.trim();
+  if(!val) return;
+  state.categories.push(val);
+  newCategory.value="";
+  renderCategoryUI();
 };
 
-window.completeHabit = async function(h){
-  if(h.lastCompletedDate===today) return;
-
-  const yesterday=new Date();
-  yesterday.setDate(yesterday.getDate()-1);
-  const yStr=yesterday.toISOString().split("T")[0];
-
-  let newStreak=(h.lastCompletedDate===yStr)?(h.streak||0)+1:1;
-
-  await updateDoc(doc(db,"habits",h.id),{
-    streak:newStreak,
-    lastCompletedDate:today
-  });
+window.deleteCategory=function(cat){
+  state.categories=state.categories.filter(c=>c!==cat);
+  renderCategoryUI();
 };
 
-function renderHabits(){
-  const container=document.getElementById("habitContainer");
-  container.innerHTML="";
+function renderCategoryUI(){
+  const catButtons=document.getElementById("categoryButtons");
+  const select=document.getElementById("categorySelect");
 
-  state.habits.forEach(h=>{
-    container.innerHTML+=`
-      <div class="card">
-        ${h.title}
-        🔥 ${h.streak||0}
-        <button onclick='completeHabit(${JSON.stringify(h)})'>✅</button>
-      </div>
+  catButtons.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
+  select.innerHTML="";
+
+  state.categories.forEach(cat=>{
+    catButtons.innerHTML+=`
+      <button onclick="changeCategory('${cat}')">${cat}</button>
+      <button onclick="deleteCategory('${cat}')">❌</button>
     `;
+    select.innerHTML+=`<option>${cat}</option>`;
   });
 }
 
 /* ---------------- 月曆 ---------------- */
 
+window.changeMonth=function(offset){
+  currentMonth+=offset;
+  if(currentMonth<0){currentMonth=11;currentYear--;}
+  if(currentMonth>11){currentMonth=0;currentYear++;}
+  renderCalendar();
+};
+
 function renderCalendar(){
-  const calendar=document.getElementById("calendarContainer");
+  const cal=document.getElementById("calendarContainer");
   const title=document.getElementById("calendarTitle");
-  calendar.innerHTML="";
+  cal.innerHTML="";
 
-  const now=new Date();
-  const year=now.getFullYear();
-  const month=now.getMonth();
+  title.innerText=`${currentYear} 年 ${currentMonth+1} 月`;
 
-  title.innerText = `${year} 年 ${month+1} 月`;
+  const first=new Date(currentYear,currentMonth,1).getDay();
+  const days=new Date(currentYear,currentMonth+1,0).getDate();
 
-  const firstDay=new Date(year,month,1).getDay();
-  const daysInMonth=new Date(year,month+1,0).getDate();
+  for(let i=0;i<first;i++) cal.innerHTML+="<div></div>";
 
-  for(let i=0;i<firstDay;i++) calendar.innerHTML+="<div></div>";
-
-  for(let d=1;d<=daysInMonth;d++){
-    const dateStr=`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const isToday = dateStr===today;
-
-    calendar.innerHTML+=`
+  for(let d=1;d<=days;d++){
+    const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const isToday=dateStr===today;
+    cal.innerHTML+=`
       <div class="calendar-day ${isToday?"today":""}">
         ${d}
       </div>
@@ -270,14 +231,7 @@ function renderCalendar(){
   }
 }
 
-/* ---------------- 切換頁面 ---------------- */
-
-window.switchPage=function(page){
-  ["dashboard","tasks","completed","habits","calendar"]
-  .forEach(p=>document.getElementById(p).style.display="none");
-
-  document.getElementById(page).style.display="block";
-};
+/* ---------------- 初始化 ---------------- */
 
 loadData();
 </script>
@@ -286,81 +240,45 @@ loadData();
 body{font-family:Arial;background:#f4f6f9;padding:20px;margin-bottom:60px;}
 .card{background:white;padding:12px;margin:8px 0;border-radius:10px;box-shadow:0 3px 8px rgba(0,0,0,0.05);}
 .task-row{display:flex;justify-content:space-between;align-items:center;}
-.note{display:none;margin-top:8px;}
-.note-input{width:100%;min-height:60px;}
 .completed{text-decoration:line-through;color:#888;}
 .pinned{border-left:4px solid #2563eb;}
-.due{font-size:12px;color:#888;margin-left:5px;}
+.due{font-size:12px;margin-left:6px;color:#555;}
+.overdue{color:red;font-weight:bold;}
+.note-input{width:100%;min-height:50px;margin-top:6px;}
 .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
 .calendar-day{background:white;padding:10px;text-align:center;border-radius:8px;}
 .today{background:#2563eb;color:white;font-weight:bold;}
+button{cursor:pointer;margin:2px;}
 .nav{position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;display:flex;justify-content:space-around;border-top:1px solid #ddd;}
-button{cursor:pointer;}
 </style>
 </head>
 
 <body>
 
-<div id="dashboard">
 <h1>🌿 FocusLife</h1>
 <div>細節成就卓越</div>
-<div class="card">🎯 進行中任務：<span id="statTasks">0</span></div>
-<div class="card">✅ 已完成任務：<span id="statCompleted">0</span></div>
-<h3>今日焦點</h3>
-<div id="todayFocus"></div>
-</div>
 
-<div id="tasks" style="display:none;">
 <h2>📝 任務</h2>
 
-<div>
-<button onclick="changeCategory('全部')">全部</button>
-<button onclick="changeCategory('工作')">工作</button>
-<button onclick="changeCategory('學習')">學習</button>
-<button onclick="changeCategory('運動')">運動</button>
-<button onclick="changeCategory('生活')">生活</button>
-<button onclick="changeCategory('嗜好小組')">嗜好小組</button>
-</div>
+<div id="categoryButtons"></div>
+<input id="newCategory" placeholder="新增分類">
+<button onclick="addCategory()">新增分類</button>
+
+<br><br>
 
 <input id="taskInput" placeholder="任務名稱">
 <input id="taskNote" placeholder="備註">
 <input type="date" id="taskDue">
-<select id="categorySelect">
-<option>工作</option>
-<option>學習</option>
-<option>運動</option>
-<option>生活</option>
-<option>嗜好小組</option>
-</select>
-<button onclick="addTask()">新增</button>
+<select id="categorySelect"></select>
+<button onclick="addTask()">新增任務</button>
 
 <div id="tasksContainer"></div>
-</div>
 
-<div id="completed" style="display:none;">
-<h2>✅ 已完成任務</h2>
-<div id="completedContainer"></div>
-</div>
-
-<div id="habits" style="display:none;">
-<h2>🔥 習慣</h2>
-<input id="habitInput" placeholder="習慣名稱">
-<button onclick="addHabit()">新增</button>
-<div id="habitContainer"></div>
-</div>
-
-<div id="calendar" style="display:none;">
-<h2 id="calendarTitle"></h2>
+<h2>📅 月曆</h2>
+<button onclick="changeMonth(-1)">⬅</button>
+<span id="calendarTitle"></span>
+<button onclick="changeMonth(1)">➡</button>
 <div class="calendar" id="calendarContainer"></div>
-</div>
-
-<div class="nav">
-<span onclick="switchPage('dashboard')">🏠</span>
-<span onclick="switchPage('tasks')">📝</span>
-<span onclick="switchPage('completed')">✅</span>
-<span onclick="switchPage('habits')">🔥</span>
-<span onclick="switchPage('calendar')">📅</span>
-</div>
 
 </body>
 </html>
