@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.5</title>
+<title>FocusLife v17.6</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -32,6 +32,8 @@ const db = getFirestore(app);
 
 const state = { tasks: [], categories: [] };
 let currentCategory = "全部";
+let currentYear = new Date().getFullYear();
+let currentMonth = new Date().getMonth();
 
 /* ---------- 分類 ---------- */
 
@@ -55,7 +57,6 @@ window.addCategory = async function(){
 };
 
 window.deleteCategory = async function(id,name){
-
   const tasksSnap = await getDocs(collection(db,"tasks"));
   for(const t of tasksSnap.docs){
     if(t.data().category===name){
@@ -64,12 +65,8 @@ window.deleteCategory = async function(id,name){
       });
     }
   }
-
   await deleteDoc(doc(db,"categories",id));
-
-  if(currentCategory===name){
-    currentCategory="全部";
-  }
+  if(currentCategory===name) currentCategory="全部";
 };
 
 window.changeCategory=function(cat){
@@ -78,8 +75,8 @@ window.changeCategory=function(cat){
   renderCategoryUI();
 };
 
-let longPressTimer = null;
-let activeDelete = null;
+let longPressTimer=null;
+let activeDelete=null;
 
 function renderCategoryUI(){
   const container=document.getElementById("categoryScroll");
@@ -92,7 +89,6 @@ function renderCategoryUI(){
     const div=document.createElement("div");
     div.className="cat-item"+(currentCategory===name?" active":"");
     div.innerHTML=`<span>${name}</span><span class="delete-btn">✕</span>`;
-
     const del=div.querySelector(".delete-btn");
     del.style.display="none";
 
@@ -106,9 +102,7 @@ function renderCategoryUI(){
       },800);
     });
 
-    div.addEventListener("touchend",()=>{
-      clearTimeout(longPressTimer);
-    });
+    div.addEventListener("touchend",()=>clearTimeout(longPressTimer));
 
     del.onclick=(e)=>{
       e.stopPropagation();
@@ -140,6 +134,7 @@ function loadTasks(){
   onSnapshot(collection(db,"tasks"), snap=>{
     state.tasks = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderTasks();
+    renderCalendar();
   });
 }
 
@@ -221,6 +216,42 @@ function renderTasks(){
   });
 }
 
+/* ---------- 月曆 ---------- */
+
+window.changeMonth=function(offset){
+  currentMonth+=offset;
+  if(currentMonth<0){currentMonth=11;currentYear--;}
+  if(currentMonth>11){currentMonth=0;currentYear++;}
+  renderCalendar();
+};
+
+function renderCalendar(){
+  const cal=document.getElementById("calendarContainer");
+  const title=document.getElementById("calendarTitle");
+  cal.innerHTML="";
+  title.innerText=`${currentYear} 年 ${currentMonth+1} 月`;
+
+  const first=new Date(currentYear,currentMonth,1).getDay();
+  const days=new Date(currentYear,currentMonth+1,0).getDate();
+  const weekdays=["日","一","二","三","四","五","六"];
+
+  weekdays.forEach(d=>cal.innerHTML+=`<div class="weekday">${d}</div>`);
+
+  for(let i=0;i<first;i++) cal.innerHTML+="<div></div>";
+
+  for(let d=1;d<=days;d++){
+    const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
+
+    cal.innerHTML+=`
+      <div class="calendar-day">
+        ${d}
+        ${hasTask?`<div class="task-dot"></div>`:""}
+      </div>
+    `;
+  }
+}
+
 /* ---------- 初始化 ---------- */
 
 loadCategories();
@@ -231,53 +262,24 @@ loadTasks();
 <style>
 body{font-family:Arial;background:#f6f7f9;padding:20px;}
 
-.category-scroll{
-  display:flex;
-  overflow-x:auto;
-  gap:8px;
-  padding-bottom:6px;
-  margin-bottom:10px;
-}
-
-.cat-item{
-  flex:0 0 auto;
-  padding:6px 14px;
-  background:#e5e7eb;
-  border-radius:20px;
-  font-size:14px;
-  cursor:pointer;
-  white-space:nowrap;
-  display:flex;
-  align-items:center;
-  gap:6px;
-}
-
-.cat-item.active{
-  background:#2563eb;
-  color:white;
-}
-
-.delete-btn{
-  font-size:12px;
-  color:#dc2626;
-}
+.category-scroll{display:flex;overflow-x:auto;gap:8px;margin-bottom:10px;}
+.cat-item{padding:6px 14px;background:#e5e7eb;border-radius:20px;display:flex;gap:6px;align-items:center;}
+.cat-item.active{background:#2563eb;color:white;}
+.delete-btn{font-size:12px;color:#dc2626;}
 
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
 .task-row{display:flex;justify-content:space-between;align-items:center;}
 .completed{text-decoration:line-through;color:#aaa;}
 
-.priority{
-  padding:2px 8px;
-  border-radius:12px;
-  font-size:12px;
-  margin-left:8px;
-}
-
+.priority{padding:2px 8px;border-radius:12px;font-size:12px;margin-left:8px;}
 .p-high{background:#fee2e2;color:#b91c1c;}
 .p-mid{background:#ffedd5;color:#c2410c;}
 .p-low{background:#e5e7eb;color:#374151;}
 
-.icon-btn{background:none;border:none;font-size:14px;cursor:pointer;}
+.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
+.weekday{text-align:center;font-size:12px;color:#666;}
+.calendar-day{background:white;padding:10px;border-radius:10px;text-align:center;}
+.task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;margin:4px auto 0;}
 </style>
 </head>
 
@@ -285,25 +287,27 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 
 <h3>分類</h3>
 <div class="category-scroll" id="categoryScroll"></div>
-
 <input id="newCategory" placeholder="新增分類">
 <button onclick="addCategory()">新增分類</button>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="任務名稱">
 <input type="date" id="taskDue">
-
 <select id="categorySelect"></select>
-
 <select id="prioritySelect">
   <option value="高">高</option>
   <option value="中" selected>中</option>
   <option value="低">低</option>
 </select>
-
 <button onclick="addTask()">新增</button>
 
 <div id="tasksContainer"></div>
+
+<h3>📅 月曆</h3>
+<button onclick="changeMonth(-1)">‹</button>
+<span id="calendarTitle"></span>
+<button onclick="changeMonth(1)">›</button>
+<div class="calendar" id="calendarContainer"></div>
 
 </body>
 </html>
