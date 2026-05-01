@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v15</title>
+<title>FocusLife v16</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -23,9 +23,9 @@ import {
 /* ---------------- Firebase ---------------- */
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
-  authDomain: "focuslife-app-eeba5.firebaseapp.com",
-  projectId: "focuslife-app-eeba5"
+  apiKey: "YOUR_KEY",
+  authDomain: "YOUR_DOMAIN",
+  projectId: "YOUR_PROJECT"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -38,73 +38,47 @@ function getHKToday(){
 }
 const today = getHKToday();
 
-/* ---------------- 全域狀態 ---------------- */
+/* ---------------- State ---------------- */
 
-const state = {
-  tasks: [],
-  habits: [],
-  categories: ["工作","學習","運動","生活"]
-};
-
-let currentCategory = "全部";
+const state = { tasks: [] };
 let currentYear = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",year:"numeric"});
 let currentMonth = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",month:"numeric"})-1;
 
-/* ---------------- 載入資料 ---------------- */
+/* ---------------- Data ---------------- */
 
 function loadData(){
   onSnapshot(collection(db,"tasks"), snap=>{
     state.tasks = snap.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
-  });
-
-  onSnapshot(collection(db,"habits"), snap=>{
-    state.habits = snap.docs.map(d=>({id:d.id,...d.data()}));
-    renderAll();
+    renderTasks();
+    renderCalendar();
   });
 }
 
-/* ---------------- 渲染入口 ---------------- */
+/* ---------------- Task ---------------- */
 
-function renderAll(){
-  renderTasks();
-  renderCalendar();
-  renderCategoryUI();
-}
+window.addTask = async function(title, dueDate){
+  const input = document.getElementById("taskInput");
+  const taskTitle = title || input.value.trim();
+  const taskDue = dueDate || document.getElementById("taskDue").value;
 
-/* ---------------- 任務 ---------------- */
-
-window.addTask = async function(){
-  const title=taskInput.value.trim();
-  const note=taskNote.value.trim();
-  const due=taskDue.value;
-  const category=categorySelect.value;
-
-  if(!title) return;
+  if(!taskTitle) return;
 
   await addDoc(collection(db,"tasks"),{
-    title,note,dueDate:due,
-    category,
+    title:taskTitle,
+    dueDate:taskDue,
+    note:"",
     completed:false,
-    pinned:false,
     order:Date.now(),
     created:serverTimestamp()
   });
 
-  taskInput.value="";
-  taskNote.value="";
-  taskDue.value="";
+  input.value="";
+  closeCalendarModal();
 };
 
 window.toggleTask = async function(task){
   await updateDoc(doc(db,"tasks",task.id),{
     completed:!task.completed
-  });
-};
-
-window.togglePin = async function(task){
-  await updateDoc(doc(db,"tasks",task.id),{
-    pinned:!task.pinned
   });
 };
 
@@ -117,42 +91,40 @@ window.saveNote = async function(id){
   await updateDoc(doc(db,"tasks",id),{note:val});
 };
 
-window.changeCategory = function(cat){
-  currentCategory=cat;
-  renderTasks();
+window.toggleNote=function(id){
+  const el=document.getElementById("note-box-"+id);
+  el.style.display = el.style.display==="block"?"none":"block";
 };
 
 function renderTasks(){
   const container=document.getElementById("tasksContainer");
   container.innerHTML="";
 
-  const filtered = state.tasks
-    .filter(t=>currentCategory==="全部"||t.category===currentCategory)
-    .sort((a,b)=>{
-      if(a.completed!==b.completed) return a.completed-b.completed;
-      if(a.pinned!==b.pinned) return b.pinned-a.pinned;
-      return (a.order||0)-(b.order||0);
-    });
+  const sorted = state.tasks.sort((a,b)=>{
+    if(a.completed!==b.completed) return a.completed-b.completed;
+    return (a.order||0)-(b.order||0);
+  });
 
-  filtered.forEach(task=>{
-    const overdue = task.dueDate && task.dueDate<today && !task.completed;
-
+  sorted.forEach(task=>{
     container.innerHTML+=`
-      <div class="card ${task.completed?"completed":""} ${task.pinned?"pinned":""}">
+      <div class="task-card ${task.completed?"completed":""}" data-id="${task.id}">
         <div class="task-row">
-          <div>
+          <div class="task-left">
             <input type="checkbox" ${task.completed?"checked":""}
               onchange='toggleTask(${JSON.stringify(task)})'>
-            ${task.title}
-            ${task.dueDate?`<span class="due ${overdue?"overdue":""}">📅 ${task.dueDate}</span>`:""}
+            <span>${task.title}</span>
+            ${task.dueDate?`<span class="due">${task.dueDate}</span>`:""}
           </div>
-          <div>
-            <button onclick='togglePin(${JSON.stringify(task)})'>📌</button>
-            <button onclick="deleteTask('${task.id}')">❌</button>
+          <div class="task-actions">
+            ${task.note?`<button class="icon-btn" onclick="toggleNote('${task.id}')">📝</button>`:""}
+            <button class="icon-btn delete" onclick="deleteTask('${task.id}')">✕</button>
           </div>
         </div>
-        <textarea id="note-${task.id}" class="note-input"
-          onchange="saveNote('${task.id}')">${task.note||""}</textarea>
+
+        ${task.note?`
+        <div id="note-box-${task.id}" class="note-box">
+          <textarea id="note-${task.id}" onchange="saveNote('${task.id}')">${task.note}</textarea>
+        </div>`:""}
       </div>
     `;
   });
@@ -168,38 +140,7 @@ function renderTasks(){
   });
 }
 
-/* ---------------- 分類管理 ---------------- */
-
-window.addCategory=function(){
-  const val=newCategory.value.trim();
-  if(!val) return;
-  state.categories.push(val);
-  newCategory.value="";
-  renderCategoryUI();
-};
-
-window.deleteCategory=function(cat){
-  state.categories=state.categories.filter(c=>c!==cat);
-  renderCategoryUI();
-};
-
-function renderCategoryUI(){
-  const catButtons=document.getElementById("categoryButtons");
-  const select=document.getElementById("categorySelect");
-
-  catButtons.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
-  select.innerHTML="";
-
-  state.categories.forEach(cat=>{
-    catButtons.innerHTML+=`
-      <button onclick="changeCategory('${cat}')">${cat}</button>
-      <button onclick="deleteCategory('${cat}')">❌</button>
-    `;
-    select.innerHTML+=`<option>${cat}</option>`;
-  });
-}
-
-/* ---------------- 月曆 ---------------- */
+/* ---------------- Calendar ---------------- */
 
 window.changeMonth=function(offset){
   currentMonth+=offset;
@@ -223,62 +164,193 @@ function renderCalendar(){
   for(let d=1;d<=days;d++){
     const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
     const isToday=dateStr===today;
+
     cal.innerHTML+=`
-      <div class="calendar-day ${isToday?"today":""}">
+      <div class="calendar-day ${isToday?"today":""}"
+        onclick="openCalendarModal('${dateStr}')">
         ${d}
       </div>
     `;
   }
 }
 
-/* ---------------- 初始化 ---------------- */
+/* ---------------- Calendar Modal ---------------- */
+
+window.openCalendarModal=function(date){
+  document.getElementById("modalDate").innerText=date;
+  document.getElementById("calendarModal").style.display="flex";
+  document.getElementById("modalInput").focus();
+};
+
+window.closeCalendarModal=function(){
+  document.getElementById("calendarModal").style.display="none";
+};
+
+window.addFromCalendar=function(){
+  const title=document.getElementById("modalInput").value.trim();
+  const date=document.getElementById("modalDate").innerText;
+  addTask(title,date);
+  document.getElementById("modalInput").value="";
+};
+
+/* ---------------- Init ---------------- */
 
 loadData();
 </script>
 
 <style>
-body{font-family:Arial;background:#f4f6f9;padding:20px;margin-bottom:60px;}
-.card{background:white;padding:12px;margin:8px 0;border-radius:10px;box-shadow:0 3px 8px rgba(0,0,0,0.05);}
-.task-row{display:flex;justify-content:space-between;align-items:center;}
-.completed{text-decoration:line-through;color:#888;}
-.pinned{border-left:4px solid #2563eb;}
-.due{font-size:12px;margin-left:6px;color:#555;}
-.overdue{color:red;font-weight:bold;}
-.note-input{width:100%;min-height:50px;margin-top:6px;}
-.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
-.calendar-day{background:white;padding:10px;text-align:center;border-radius:8px;}
-.today{background:#2563eb;color:white;font-weight:bold;}
-button{cursor:pointer;margin:2px;}
-.nav{position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;display:flex;justify-content:space-around;border-top:1px solid #ddd;}
+body{
+  font-family:Arial;
+  background:#f6f7f9;
+  padding:20px;
+  margin-bottom:60px;
+}
+
+/* 金句 */
+.quote{
+  text-align:center;
+  font-size:22px;
+  font-weight:600;
+  margin:40px 0;
+  color:#444;
+}
+
+/* 任務 */
+.task-card{
+  background:white;
+  padding:14px;
+  margin:10px 0;
+  border-radius:12px;
+  box-shadow:0 3px 8px rgba(0,0,0,0.05);
+}
+
+.task-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.task-left{
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.due{
+  font-size:12px;
+  color:#777;
+  margin-left:8px;
+}
+
+.completed{
+  text-decoration:line-through;
+  color:#aaa;
+}
+
+.icon-btn{
+  background:none;
+  border:none;
+  font-size:14px;
+  cursor:pointer;
+  opacity:0.6;
+}
+
+.icon-btn:hover{
+  opacity:1;
+}
+
+.delete{
+  font-size:13px;
+}
+
+.note-box{
+  margin-top:8px;
+}
+
+.note-box textarea{
+  width:100%;
+  border:none;
+  background:#f2f2f2;
+  padding:8px;
+  border-radius:8px;
+  resize:none;
+}
+
+/* 月曆 */
+.calendar{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:6px;
+  margin-top:10px;
+}
+
+.calendar-day{
+  background:white;
+  padding:12px;
+  border-radius:10px;
+  text-align:center;
+  cursor:pointer;
+}
+
+.calendar-day:hover{
+  background:#e8f0ff;
+}
+
+.today{
+  background:#2563eb;
+  color:white;
+}
+
+/* Modal */
+.modal{
+  position:fixed;
+  top:0;left:0;right:0;bottom:0;
+  background:rgba(0,0,0,0.3);
+  display:none;
+  justify-content:center;
+  align-items:center;
+}
+
+.modal-box{
+  background:white;
+  padding:20px;
+  border-radius:12px;
+  width:280px;
+}
+
+.modal-box input{
+  width:100%;
+  padding:8px;
+  margin-top:8px;
+}
 </style>
 </head>
 
 <body>
 
-<h1>🌿 FocusLife</h1>
-<div>細節成就卓越</div>
+<div class="quote">細節成就卓越</div>
 
-<h2>📝 任務</h2>
-
-<div id="categoryButtons"></div>
-<input id="newCategory" placeholder="新增分類">
-<button onclick="addCategory()">新增分類</button>
-
-<br><br>
-
+<h3>新增任務</h3>
 <input id="taskInput" placeholder="任務名稱">
-<input id="taskNote" placeholder="備註">
 <input type="date" id="taskDue">
-<select id="categorySelect"></select>
-<button onclick="addTask()">新增任務</button>
+<button onclick="addTask()">新增</button>
 
 <div id="tasksContainer"></div>
 
-<h2>📅 月曆</h2>
-<button onclick="changeMonth(-1)">⬅</button>
+<h3>📅 月曆</h3>
+<button onclick="changeMonth(-1)">‹</button>
 <span id="calendarTitle"></span>
-<button onclick="changeMonth(1)">➡</button>
+<button onclick="changeMonth(1)">›</button>
 <div class="calendar" id="calendarContainer"></div>
+
+<div id="calendarModal" class="modal">
+  <div class="modal-box">
+    <div id="modalDate"></div>
+    <input id="modalInput" placeholder="輸入任務">
+    <button onclick="addFromCalendar()">新增</button>
+    <button onclick="closeCalendarModal()">取消</button>
+  </div>
+</div>
 
 </body>
 </html>
