@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v11.3</title>
+<title>FocusLife v12</title>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
@@ -35,226 +35,198 @@ const db = getFirestore(app);
 let allTasks = [];
 let allHabits = [];
 
-/* ---------------- 任務系統 ---------------- */
+const today = new Date().toISOString().split("T")[0];
 
-window.addTask = async function(){
-  const title = document.getElementById("taskInput").value.trim();
-  const note = document.getElementById("taskNote").value.trim();
-  const category = document.getElementById("categorySelect").value;
+/* ---------------- 資料載入 ---------------- */
 
-  if(!title) return;
-
-  await addDoc(collection(db,"tasks"),{
-    title,
-    note,
-    category,
-    completed:false,
-    created:serverTimestamp()
-  });
-
-  document.getElementById("taskInput").value="";
-  document.getElementById("taskNote").value="";
-};
-
-window.toggleTask = async(id,current)=>{
-  await updateDoc(doc(db,"tasks",id),{completed:!current});
-};
-
-function loadTasks(){
-  const q=query(collection(db,"tasks"),orderBy("created"));
-  onSnapshot(q,(snapshot)=>{
+function loadData(){
+  onSnapshot(query(collection(db,"tasks")), snapshot=>{
     allTasks=[];
     snapshot.forEach(docItem=>{
       allTasks.push({id:docItem.id,...docItem.data()});
     });
-    renderTasks();
-  });
-}
-
-function renderTasks(){
-  const container=document.getElementById("tasksContainer");
-  container.innerHTML="";
-
-  allTasks.forEach(task=>{
-    const div=document.createElement("div");
-    div.className="task-card";
-
-    div.innerHTML=`
-      <div>
-        <input type="checkbox" ${task.completed?"checked":""}
-          onchange="toggleTask('${task.id}',${task.completed})">
-        ${task.title}
-        <button onclick="toggleNote('${task.id}')">📝</button>
-      </div>
-      <div id="note-${task.id}" style="display:none;font-size:12px;color:#555;">
-        ${task.note||"無備註"}
-      </div>
-    `;
-
-    container.appendChild(div);
-  });
-}
-
-window.toggleNote=function(id){
-  const el=document.getElementById("note-"+id);
-  el.style.display=el.style.display==="none"?"block":"none";
-};
-
-/* ---------------- 習慣系統 ---------------- */
-
-window.addHabit = async function(){
-  const title=document.getElementById("habitInput").value.trim();
-  const repeatType=document.getElementById("repeatSelect").value;
-
-  if(!title) return;
-
-  await addDoc(collection(db,"habits"),{
-    title,
-    repeatType,
-    streak:0,
-    lastCompletedDate:null,
-    createdAt:serverTimestamp()
+    renderDashboard();
   });
 
-  document.getElementById("habitInput").value="";
-};
-
-async function completeHabit(habit){
-  const today=new Date().toISOString().split("T")[0];
-
-  if(habit.lastCompletedDate===today) return;
-
-  let newStreak=habit.streak||0;
-
-  const yesterday=new Date();
-  yesterday.setDate(yesterday.getDate()-1);
-  const yStr=yesterday.toISOString().split("T")[0];
-
-  if(habit.lastCompletedDate===yStr){
-    newStreak+=1;
-  }else{
-    newStreak=1;
-  }
-
-  await updateDoc(doc(db,"habits",habit.id),{
-    streak:newStreak,
-    lastCompletedDate:today
-  });
-
-  await addDoc(collection(db,"habit_logs"),{
-    habitId:habit.id,
-    date:today,
-    completed:true
-  });
-}
-
-function loadHabits(){
-  const q=query(collection(db,"habits"),orderBy("createdAt"));
-  onSnapshot(q,(snapshot)=>{
+  onSnapshot(query(collection(db,"habits")), snapshot=>{
     allHabits=[];
     snapshot.forEach(docItem=>{
       allHabits.push({id:docItem.id,...docItem.data()});
     });
-    renderHabits();
-    renderHabitChart();
+    renderDashboard();
   });
 }
 
-function renderHabits(){
-  const container=document.getElementById("habitContainer");
+/* ---------------- Dashboard ---------------- */
+
+function renderDashboard(){
+  renderStats();
+  renderTodayFocus();
+  renderHabitStatus();
+}
+
+/* ✅ 三卡片 */
+
+function renderStats(){
+  const todayTasks = allTasks.filter(t=>t.dueDate===today && !t.completed);
+  const overdue = allTasks.filter(t=>t.dueDate && t.dueDate<today && !t.completed);
+  const habitPending = allHabits.filter(h=>h.lastCompletedDate!==today);
+
+  document.getElementById("statTasks").innerText = todayTasks.length;
+  document.getElementById("statHabits").innerText = habitPending.length;
+  document.getElementById("statOverdue").innerText = overdue.length;
+}
+
+/* ✅ 今日焦點任務 */
+
+function renderTodayFocus(){
+  const container=document.getElementById("todayFocus");
+  container.innerHTML="";
+
+  const focusTasks=allTasks.filter(t=>
+    !t.completed &&
+    (t.dueDate===today || t.priority==="高" || t.pinned)
+  );
+
+  focusTasks.forEach(task=>{
+    container.innerHTML+=`
+      <div class="card">
+        ${task.title}
+      </div>
+    `;
+  });
+
+  if(focusTasks.length===0){
+    container.innerHTML="<div class='empty'>今日沒有焦點任務 🎉</div>";
+  }
+}
+
+/* ✅ 今日習慣 */
+
+function renderHabitStatus(){
+  const container=document.getElementById("habitStatus");
   container.innerHTML="";
 
   allHabits.forEach(habit=>{
-    const div=document.createElement("div");
-    div.className="habit-card";
-    div.innerHTML=`
-      ${habit.title}
-      🔥 ${habit.streak||0} 天
-      <button onclick='completeHabit(${JSON.stringify(habit)})'>✅</button>
+    const done = habit.lastCompletedDate===today;
+
+    container.innerHTML+=`
+      <div class="card">
+        ${habit.title}
+        <span>${done?"✅":"⬜"}</span>
+        🔥 ${habit.streak||0}
+      </div>
     `;
-    container.appendChild(div);
   });
 }
 
-/* ---------------- 趨勢圖 ---------------- */
+/* ---------------- 切換頁面 ---------------- */
 
-async function renderHabitChart(){
-  const snapshot=await getDocs(collection(db,"habit_logs"));
-  const logs=snapshot.docs.map(d=>d.data());
+window.switchPage=function(page){
+  document.getElementById("dashboard").style.display="none";
+  document.getElementById("tasks").style.display="none";
+  document.getElementById("habits").style.display="none";
+  document.getElementById("calendar").style.display="none";
+  document.getElementById(page).style.display="block";
+};
 
-  const last7=[];
-  for(let i=6;i>=0;i--){
-    const d=new Date();
-    d.setDate(d.getDate()-i);
-    last7.push(d.toISOString().split("T")[0]);
-  }
-
-  const counts=last7.map(date=>{
-    return logs.filter(l=>l.date===date).length;
-  });
-
-  const ctx=document.getElementById("habitChart");
-  new Chart(ctx,{
-    type:"bar",
-    data:{
-      labels:last7,
-      datasets:[{
-        label:"每日完成習慣數",
-        data:counts
-      }]
-    }
-  });
-}
-
-loadTasks();
-loadHabits();
+loadData();
 
 </script>
 
 <style>
 body{font-family:Arial;background:#f4f6f9;padding:20px;}
-.task-card,.habit-card{
+
+h1{margin-bottom:10px;}
+
+.stats{
+  display:flex;
+  gap:10px;
+}
+
+.stat-card{
+  flex:1;
+  background:white;
+  padding:15px;
+  border-radius:12px;
+  text-align:center;
+  font-size:18px;
+  box-shadow:0 4px 10px rgba(0,0,0,0.05);
+}
+
+.section{margin-top:20px;}
+
+.card{
   background:white;
   padding:10px;
-  margin:8px 0;
+  margin:6px 0;
   border-radius:8px;
 }
-button{margin-left:6px;}
+
+.empty{
+  color:#888;
+  font-size:14px;
+}
+
+.nav{
+  position:fixed;
+  bottom:0;
+  left:0;
+  right:0;
+  background:white;
+  padding:10px;
+  display:flex;
+  justify-content:space-around;
+  border-top:1px solid #ddd;
+}
 </style>
 </head>
 
 <body>
 
-<h1>🌿 FocusLife v11.3</h1>
+<!-- Dashboard 首頁 -->
+<div id="dashboard">
 
-<h2>📝 任務</h2>
-<input id="taskInput" placeholder="任務名稱">
-<input id="taskNote" placeholder="備註">
-<select id="categorySelect">
-  <option>工作</option>
-  <option>學習</option>
-  <option>運動</option>
-  <option>生活</option>
-  <option>嗜好小組</option>
-</select>
-<button onclick="addTask()">新增任務</button>
+<h1>🌿 今日儀表板</h1>
 
-<div id="tasksContainer"></div>
+<div class="stats">
+  <div class="stat-card">
+    🎯 今日任務<br>
+    <strong id="statTasks">0</strong>
+  </div>
+  <div class="stat-card">
+    🔥 今日習慣<br>
+    <strong id="statHabits">0</strong>
+  </div>
+  <div class="stat-card">
+    ⚠️ 過期任務<br>
+    <strong id="statOverdue">0</strong>
+  </div>
+</div>
 
-<hr>
+<div class="section">
+  <h3>🎯 今日焦點</h3>
+  <div id="todayFocus"></div>
+</div>
 
-<h2>🔥 習慣</h2>
-<input id="habitInput" placeholder="習慣名稱">
-<select id="repeatSelect">
-  <option value="daily">每日</option>
-  <option value="weekly">每週</option>
-</select>
-<button onclick="addHabit()">新增習慣</button>
+<div class="section">
+  <h3>🔥 今日習慣</h3>
+  <div id="habitStatus"></div>
+</div>
 
-<div id="habitContainer"></div>
+</div>
 
-<h3>📊 最近7天完成趨勢</h3>
-<canvas id="habitChart"></canvas>
+<!-- 其他頁面占位 -->
+<div id="tasks" style="display:none;"><h2>任務頁面</h2></div>
+<div id="habits" style="display:none;"><h2>習慣頁面</h2></div>
+<div id="calendar" style="display:none;"><h2>月曆頁面</h2></div>
+
+<div class="nav">
+  <span onclick="switchPage('dashboard')">🏠</span>
+  <span onclick="switchPage('tasks')">📝</span>
+  <span onclick="switchPage('habits')">🔥</span>
+  <span onclick="switchPage('calendar')">📅</span>
+</div>
 
 </body>
 </html>
