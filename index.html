@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v16.2</title>
+<title>FocusLife v17 Stable</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -46,8 +46,52 @@ const state = {
 };
 
 let currentCategory = "全部";
-let currentYear = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",year:"numeric"});
-let currentMonth = new Date().toLocaleString("en-US",{timeZone:"Asia/Hong_Kong",month:"numeric"})-1;
+let currentYear = new Date().getFullYear();
+let currentMonth = new Date().getMonth();
+
+/* ---------- 節日 ---------- */
+
+const fixedHolidays = [
+  { month:1, day:1, name:"元旦" },
+  { month:7, day:1, name:"香港回歸紀念日" },
+  { month:10, day:1, name:"國慶日" },
+  { month:12, day:25, name:"聖誕節" }
+];
+
+function getMotherDay(year){
+  let date = new Date(year,4,1);
+  let count = 0;
+  while(true){
+    if(date.getDay()===0){
+      count++;
+      if(count===2) return date;
+    }
+    date.setDate(date.getDate()+1);
+  }
+}
+
+function getFatherDay(year){
+  let date = new Date(year,5,1);
+  let count = 0;
+  while(true){
+    if(date.getDay()===0){
+      count++;
+      if(count===3) return date;
+    }
+    date.setDate(date.getDate()+1);
+  }
+}
+
+function getHoliday(year,month,day){
+  for(const h of fixedHolidays){
+    if(h.month===month+1 && h.day===day) return h.name;
+  }
+  const m = getMotherDay(year);
+  if(m.getMonth()===month && m.getDate()===day) return "母親節";
+  const f = getFatherDay(year);
+  if(f.getMonth()===month && f.getDate()===day) return "父親節";
+  return null;
+}
 
 /* ---------- Data ---------- */
 
@@ -61,7 +105,7 @@ function loadData(){
 
 /* ---------- 任務 ---------- */
 
-window.addTask = async function(title, dueDate){
+window.addTask = async function(title,dueDate){
   const taskTitle = title || document.getElementById("taskInput").value.trim();
   const taskDue = dueDate || document.getElementById("taskDue").value;
   const category = document.getElementById("categorySelect").value;
@@ -70,8 +114,8 @@ window.addTask = async function(title, dueDate){
 
   await addDoc(collection(db,"tasks"),{
     title:taskTitle,
-    dueDate:taskDue || "",
-    category:category,
+    dueDate:taskDue||"",
+    category,
     note:"",
     completed:false,
     order:Date.now(),
@@ -92,6 +136,16 @@ window.deleteTask = async id=>{
   await deleteDoc(doc(db,"tasks",id));
 };
 
+window.saveNote = async function(id){
+  const val=document.getElementById("note-"+id).value;
+  await updateDoc(doc(db,"tasks",id),{note:val});
+};
+
+window.toggleNote=function(id){
+  const el=document.getElementById("note-box-"+id);
+  el.style.display = el.style.display==="block"?"none":"block";
+};
+
 function renderTasks(){
   const container=document.getElementById("tasksContainer");
   container.innerHTML="";
@@ -105,7 +159,7 @@ function renderTasks(){
 
   filtered.forEach(task=>{
     container.innerHTML+=`
-      <div class="task-card ${task.completed?"completed":""}">
+      <div class="task-card ${task.completed?"completed":""}" data-id="${task.id}">
         <div class="task-row">
           <div>
             <input type="checkbox" ${task.completed?"checked":""}
@@ -114,19 +168,63 @@ function renderTasks(){
             ${task.dueDate?`<span class="due">${task.dueDate}</span>`:""}
             ${task.category?`<span class="tag">${task.category}</span>`:""}
           </div>
-          <button class="icon-btn delete" onclick="deleteTask('${task.id}')">✕</button>
+          <div>
+            ${task.note?`<button class="icon-btn" onclick="toggleNote('${task.id}')">📝</button>`:""}
+            <button class="icon-btn delete" onclick="deleteTask('${task.id}')">✕</button>
+          </div>
         </div>
+        ${task.note?`
+        <div id="note-box-${task.id}" class="note-box">
+          <textarea id="note-${task.id}" onchange="saveNote('${task.id}')">${task.note}</textarea>
+        </div>`:""}
       </div>
     `;
   });
+
+  new Sortable(container,{
+    animation:150,
+    onEnd:async function(){
+      const items=container.children;
+      for(let i=0;i<items.length;i++){
+        await updateDoc(doc(db,"tasks",items[i].dataset.id),{order:i});
+      }
+    }
+  });
 }
 
-/* ---------- 分類 ---------- */
+/* ---------- 分類管理 ---------- */
+
+window.addCategory=function(){
+  const val=document.getElementById("newCategory").value.trim();
+  if(!val) return;
+  state.categories.push(val);
+  document.getElementById("newCategory").value="";
+  renderCategoryUI();
+};
+
+window.deleteCategory=function(cat){
+  state.categories=state.categories.filter(c=>c!==cat);
+  renderCategoryUI();
+};
 
 window.changeCategory=function(cat){
   currentCategory=cat;
   renderTasks();
 };
+
+function renderCategoryUI(){
+  const btn=document.getElementById("categoryButtons");
+  const sel=document.getElementById("categorySelect");
+  btn.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
+  sel.innerHTML="";
+  state.categories.forEach(cat=>{
+    btn.innerHTML+=`
+      <button onclick="changeCategory('${cat}')">${cat}</button>
+      <button onclick="deleteCategory('${cat}')">❌</button>
+    `;
+    sel.innerHTML+=`<option>${cat}</option>`;
+  });
+}
 
 /* ---------- 月曆 ---------- */
 
@@ -141,55 +239,72 @@ function renderCalendar(){
   const cal=document.getElementById("calendarContainer");
   const title=document.getElementById("calendarTitle");
   cal.innerHTML="";
-
   title.innerText=`${currentYear} 年 ${currentMonth+1} 月`;
 
   const first=new Date(currentYear,currentMonth,1).getDay();
   const days=new Date(currentYear,currentMonth+1,0).getDate();
-
   const weekdays=["日","一","二","三","四","五","六"];
 
-  weekdays.forEach(d=>{
-    cal.innerHTML+=`<div class="weekday">${d}</div>`;
-  });
+  weekdays.forEach(d=>cal.innerHTML+=`<div class="weekday">${d}</div>`);
 
   for(let i=0;i<first;i++) cal.innerHTML+="<div></div>";
 
   for(let d=1;d<=days;d++){
     const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const holiday=getHoliday(currentYear,currentMonth,d);
+    const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
     const isToday=dateStr===today;
 
     cal.innerHTML+=`
       <div class="calendar-day ${isToday?"today":""}"
         onclick="openCalendarModal('${dateStr}')">
-        <div>${d}</div>
-        <div class="weekday-small">${weekdays[new Date(currentYear,currentMonth,d).getDay()]}</div>
+        ${d}
+        ${holiday?`<div class="holiday-dot"></div>`:""}
+        ${hasTask?`<div class="task-dot"></div>`:""}
       </div>
     `;
   }
 }
 
-/* ---------- 月曆浮層 ---------- */
+/* ---------- 浮層 ---------- */
 
 window.openCalendarModal=function(date){
-  document.getElementById("modalDate").innerText=date;
-  document.getElementById("calendarModal").style.display="flex";
+  const box=document.getElementById("calendarModal");
+  const content=document.getElementById("modalContent");
+  content.innerHTML="";
+
+  const [y,m,d]=date.split("-");
+  const holiday=getHoliday(parseInt(y),parseInt(m)-1,parseInt(d));
+  const tasks=state.tasks.filter(t=>t.dueDate===date);
+
+  content.innerHTML+=`<div><strong>${date}</strong></div>`;
+  if(holiday) content.innerHTML+=`<div style="color:red;margin-top:4px;">${holiday}</div>`;
+
+  content.innerHTML+=`<div style="margin-top:10px;">任務：</div>`;
+  if(tasks.length===0){
+    content.innerHTML+=`<div style="color:#777;">當天沒有任務</div>`;
+  }else{
+    tasks.forEach(t=>{
+      content.innerHTML+=`<div>• ${t.title}</div>`;
+    });
+  }
+
+  content.innerHTML+=`
+    <div style="margin-top:10px;">
+      <input id="modalInput" placeholder="新增任務">
+      <button onclick="addTask(document.getElementById('modalInput').value,'${date}')">新增</button>
+    </div>
+  `;
+
+  box.style.display="flex";
 };
 
 window.closeCalendarModal=function(){
   document.getElementById("calendarModal").style.display="none";
 };
 
-window.addFromCalendar=function(){
-  const title=document.getElementById("modalInput").value.trim();
-  const date=document.getElementById("modalDate").innerText;
-  addTask(title,date);
-  document.getElementById("modalInput").value="";
-};
-
-/* ---------- Init ---------- */
-
 loadData();
+renderCategoryUI();
 </script>
 
 <style>
@@ -201,14 +316,15 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 .due{font-size:12px;color:#777;margin-left:6px;}
 .tag{background:#e8f0ff;color:#2563eb;padding:2px 6px;border-radius:6px;font-size:12px;margin-left:6px;}
 .icon-btn{background:none;border:none;font-size:13px;opacity:0.5;cursor:pointer;}
-.icon-btn:hover{opacity:1;}
+.note-box textarea{width:100%;margin-top:6px;background:#f2f2f2;border:none;padding:6px;border-radius:8px;}
 .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
 .weekday{text-align:center;font-size:12px;color:#666;}
-.calendar-day{background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
+.calendar-day{position:relative;background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
 .today{background:#2563eb;color:white;}
-.weekday-small{font-size:10px;color:#888;}
+.holiday-dot{width:6px;height:6px;background:red;border-radius:50%;position:absolute;top:4px;right:4px;}
+.task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;position:absolute;bottom:4px;left:4px;}
 .modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;justify-content:center;align-items:center;}
-.modal-box{background:white;padding:20px;border-radius:12px;width:260px;}
+.modal-box{background:white;padding:20px;border-radius:12px;width:280px;}
 </style>
 </head>
 
@@ -217,21 +333,14 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 <div class="quote">細節成就卓越</div>
 
 <h3>分類</h3>
-<button onclick="changeCategory('全部')">全部</button>
-<button onclick="changeCategory('工作')">工作</button>
-<button onclick="changeCategory('學習')">學習</button>
-<button onclick="changeCategory('運動')">運動</button>
-<button onclick="changeCategory('生活')">生活</button>
+<div id="categoryButtons"></div>
+<input id="newCategory" placeholder="新增分類">
+<button onclick="addCategory()">新增分類</button>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="任務名稱">
 <input type="date" id="taskDue">
-<select id="categorySelect">
-  <option>工作</option>
-  <option>學習</option>
-  <option>運動</option>
-  <option>生活</option>
-</select>
+<select id="categorySelect"></select>
 <button onclick="addTask()">新增</button>
 
 <div id="tasksContainer"></div>
@@ -244,10 +353,8 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 
 <div id="calendarModal" class="modal">
   <div class="modal-box">
-    <div id="modalDate"></div>
-    <input id="modalInput" placeholder="輸入任務">
-    <button onclick="addFromCalendar()">新增</button>
-    <button onclick="closeCalendarModal()">取消</button>
+    <div id="modalContent"></div>
+    <button onclick="closeCalendarModal()" style="margin-top:10px;">關閉</button>
   </div>
 </div>
 
