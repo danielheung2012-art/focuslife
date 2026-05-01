@@ -164,7 +164,12 @@ function loadTasks() {
 }
 
 /* 初始化 */
-loadCategories().then(loadTasks);
+async function init() {
+  await loadCategories();
+  loadTasks();
+}
+
+init();
 
 </script>
 
