@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v13.1</title>
+<title>FocusLife v14</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -15,7 +15,6 @@ import {
   addDoc,
   onSnapshot,
   query,
-  orderBy,
   serverTimestamp,
   doc,
   updateDoc,
@@ -35,23 +34,19 @@ const db = getFirestore(app);
 
 /* ---------------- 全域狀態 ---------------- */
 
-const state = {
-  tasks: [],
-  habits: []
-};
-
+const state = { tasks: [], habits: [] };
 let currentCategory = "全部";
 const today = new Date().toISOString().split("T")[0];
 
-/* ---------------- 資料載入 ---------------- */
+/* ---------------- 載入資料 ---------------- */
 
 function loadData(){
-  onSnapshot(query(collection(db,"tasks")), snapshot=>{
+  onSnapshot(collection(db,"tasks"), snapshot=>{
     state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
 
-  onSnapshot(query(collection(db,"habits")), snapshot=>{
+  onSnapshot(collection(db,"habits"), snapshot=>{
     state.habits = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
@@ -62,6 +57,7 @@ function loadData(){
 function renderAll(){
   renderDashboard();
   renderTasks();
+  renderCompleted();
   renderHabits();
   renderCalendar();
 }
@@ -69,46 +65,23 @@ function renderAll(){
 /* ---------------- Dashboard ---------------- */
 
 function renderDashboard(){
-  const todayTasks = state.tasks.filter(t=>!t.completed && t.dueDate===today);
-  const overdue = state.tasks.filter(t=>!t.completed && t.dueDate && t.dueDate<today);
-  const habitPending = state.habits.filter(h=>h.lastCompletedDate!==today);
+  const active = state.tasks.filter(t=>!t.completed);
+  const completed = state.tasks.filter(t=>t.completed);
 
-  document.getElementById("statTasks").innerText = todayTasks.length;
-  document.getElementById("statHabits").innerText = habitPending.length;
-  document.getElementById("statOverdue").innerText = overdue.length;
+  document.getElementById("statTasks").innerText = active.length;
+  document.getElementById("statCompleted").innerText = completed.length;
 
-  const focus = state.tasks.filter(t=>!t.completed &&
-    (t.dueDate===today || t.priority==="高" || t.pinned));
-
-  const focusContainer = document.getElementById("todayFocus");
-  focusContainer.innerHTML = focus.length ?
-    focus.map(t=>`<div class="card">${t.title}</div>`).join("") :
-    "<div class='empty'>今日沒有焦點任務 🎉</div>";
-
-  const habitContainer = document.getElementById("habitStatus");
-  habitContainer.innerHTML = state.habits.map(h=>{
-    const done = h.lastCompletedDate===today;
-    return `
-      <div class="card">
-        ${h.title}
-        <span>${done?"✅":"⬜"}</span>
-        🔥 ${h.streak||0}
-      </div>
-    `;
-  }).join("");
+  document.getElementById("todayFocus").innerHTML =
+    active.slice(0,3).map(t=>`<div class="card">${t.title}</div>`).join("");
 }
 
 /* ---------------- 任務系統 ---------------- */
-
-window.changeCategory = function(cat){
-  currentCategory = cat;
-  renderTasks();
-};
 
 window.addTask = async function(){
   const title = document.getElementById("taskInput").value.trim();
   const note = document.getElementById("taskNote").value.trim();
   const category = document.getElementById("categorySelect").value;
+  const dueDate = document.getElementById("taskDue").value;
 
   if(!title) return;
 
@@ -116,17 +89,29 @@ window.addTask = async function(){
     title,
     note,
     category,
+    dueDate,
+    pinned:false,
     completed:false,
     order: Date.now(),
     created:serverTimestamp()
   });
 
-  document.getElementById("taskInput").value="";
-  document.getElementById("taskNote").value="";
+  taskInput.value="";
+  taskNote.value="";
+  taskDue.value="";
 };
 
-window.toggleTask = async (id,current)=>
-  await updateDoc(doc(db,"tasks",id),{completed:!current});
+window.toggleTask = async (task)=>{
+  await updateDoc(doc(db,"tasks",task.id),{
+    completed:!task.completed
+  });
+};
+
+window.togglePin = async (task)=>{
+  await updateDoc(doc(db,"tasks",task.id),{
+    pinned:!task.pinned
+  });
+};
 
 window.deleteTask = async (id)=>
   await deleteDoc(doc(db,"tasks",id));
@@ -136,7 +121,12 @@ window.saveNote = async function(id){
   await updateDoc(doc(db,"tasks",id),{note:value});
 };
 
-window.toggleNote=function(id){
+window.changeCategory = function(cat){
+  currentCategory = cat;
+  renderTasks();
+};
+
+window.toggleNote = function(id){
   const el=document.getElementById("note-"+id);
   el.style.display = el.style.display==="block"?"none":"block";
 };
@@ -146,27 +136,31 @@ function renderTasks(){
   container.innerHTML="";
 
   const tasks = state.tasks
-    .filter(t => currentCategory==="全部" || t.category===currentCategory)
-    .sort((a,b)=>(a.order||0)-(b.order||0));
+    .filter(t=>!t.completed)
+    .filter(t=>currentCategory==="全部"||t.category===currentCategory)
+    .sort((a,b)=>{
+      if(a.pinned!==b.pinned) return b.pinned-a.pinned;
+      return (a.order||0)-(b.order||0);
+    });
 
   tasks.forEach(task=>{
     container.innerHTML+=`
-      <div class="card" data-id="${task.id}">
+      <div class="card ${task.pinned?"pinned":""}" data-id="${task.id}">
         <div class="task-row">
           <div>
-            <input type="checkbox" ${task.completed?"checked":""}
-              onchange="toggleTask('${task.id}',${task.completed})">
+            <input type="checkbox" onchange='toggleTask(${JSON.stringify(task)})'>
             ${task.title}
+            ${task.dueDate?`<span class="due">📅 ${task.dueDate}</span>`:""}
           </div>
           <div>
+            <button onclick='togglePin(${JSON.stringify(task)})'>📌</button>
             <button onclick="toggleNote('${task.id}')">📝</button>
             <button onclick="deleteTask('${task.id}')">❌</button>
           </div>
         </div>
-
         <div id="note-${task.id}" class="note">
           <textarea id="note-input-${task.id}" class="note-input">${task.note||""}</textarea>
-          <button onclick="saveNote('${task.id}')">💾 儲存</button>
+          <button onclick="saveNote('${task.id}')">💾</button>
         </div>
       </div>
     `;
@@ -184,10 +178,26 @@ function renderTasks(){
   });
 }
 
-/* ---------------- 習慣系統 ---------------- */
+/* ---------------- 已完成頁面 ---------------- */
+
+function renderCompleted(){
+  const container=document.getElementById("completedContainer");
+  container.innerHTML="";
+
+  state.tasks.filter(t=>t.completed)
+  .forEach(task=>{
+    container.innerHTML+=`
+      <div class="card completed">
+        ✅ ${task.title}
+      </div>
+    `;
+  });
+}
+
+/* ---------------- 習慣 ---------------- */
 
 window.addHabit = async function(){
-  const title=document.getElementById("habitInput").value.trim();
+  const title=habitInput.value.trim();
   if(!title) return;
 
   await addDoc(collection(db,"habits"),{
@@ -197,20 +207,19 @@ window.addHabit = async function(){
     createdAt:serverTimestamp()
   });
 
-  document.getElementById("habitInput").value="";
+  habitInput.value="";
 };
 
-window.completeHabit = async function(habit){
-  if(habit.lastCompletedDate===today) return;
+window.completeHabit = async function(h){
+  if(h.lastCompletedDate===today) return;
 
-  const yesterday = new Date();
+  const yesterday=new Date();
   yesterday.setDate(yesterday.getDate()-1);
-  const yStr = yesterday.toISOString().split("T")[0];
+  const yStr=yesterday.toISOString().split("T")[0];
 
-  let newStreak = (habit.lastCompletedDate===yStr) ?
-    (habit.streak||0)+1 : 1;
+  let newStreak=(h.lastCompletedDate===yStr)?(h.streak||0)+1:1;
 
-  await updateDoc(doc(db,"habits",habit.id),{
+  await updateDoc(doc(db,"habits",h.id),{
     streak:newStreak,
     lastCompletedDate:today
   });
@@ -235,11 +244,14 @@ function renderHabits(){
 
 function renderCalendar(){
   const calendar=document.getElementById("calendarContainer");
+  const title=document.getElementById("calendarTitle");
   calendar.innerHTML="";
 
   const now=new Date();
   const year=now.getFullYear();
   const month=now.getMonth();
+
+  title.innerText = `${year} 年 ${month+1} 月`;
 
   const firstDay=new Date(year,month,1).getDay();
   const daysInMonth=new Date(year,month+1,0).getDate();
@@ -248,11 +260,11 @@ function renderCalendar(){
 
   for(let d=1;d<=daysInMonth;d++){
     const dateStr=`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
+    const isToday = dateStr===today;
+
     calendar.innerHTML+=`
-      <div class="calendar-day">
+      <div class="calendar-day ${isToday?"today":""}">
         ${d}
-        ${hasTask?"<div class='dot'></div>":""}
       </div>
     `;
   }
@@ -261,9 +273,9 @@ function renderCalendar(){
 /* ---------------- 切換頁面 ---------------- */
 
 window.switchPage=function(page){
-  ["dashboard","tasks","habits","calendar"].forEach(p=>{
-    document.getElementById(p).style.display="none";
-  });
+  ["dashboard","tasks","completed","habits","calendar"]
+  .forEach(p=>document.getElementById(p).style.display="none");
+
   document.getElementById(page).style.display="block";
 };
 
@@ -272,44 +284,17 @@ loadData();
 
 <style>
 body{font-family:Arial;background:#f4f6f9;padding:20px;margin-bottom:60px;}
-h1{margin-bottom:5px;}
-.subtitle{color:#666;margin-bottom:20px;}
-
-.stats{display:flex;gap:10px;margin-bottom:20px;}
-.stat-card{
-  flex:1;background:white;padding:15px;border-radius:14px;
-  text-align:center;box-shadow:0 4px 10px rgba(0,0,0,0.05);
-}
-
-.card{
-  background:white;padding:12px;margin:8px 0;
-  border-radius:10px;box-shadow:0 3px 8px rgba(0,0,0,0.04);
-}
-
+.card{background:white;padding:12px;margin:8px 0;border-radius:10px;box-shadow:0 3px 8px rgba(0,0,0,0.05);}
 .task-row{display:flex;justify-content:space-between;align-items:center;}
-
 .note{display:none;margin-top:8px;}
 .note-input{width:100%;min-height:60px;}
-
-.empty{color:#888;font-size:14px;}
-
+.completed{text-decoration:line-through;color:#888;}
+.pinned{border-left:4px solid #2563eb;}
+.due{font-size:12px;color:#888;margin-left:5px;}
 .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
-.calendar-day{
-  background:white;padding:10px;text-align:center;
-  border-radius:8px;position:relative;
-}
-.dot{
-  width:6px;height:6px;background:#2563eb;
-  border-radius:50%;position:absolute;
-  bottom:4px;left:50%;transform:translateX(-50%);
-}
-
-.nav{
-  position:fixed;bottom:0;left:0;right:0;
-  background:white;padding:10px;
-  display:flex;justify-content:space-around;
-  border-top:1px solid #ddd;
-}
+.calendar-day{background:white;padding:10px;text-align:center;border-radius:8px;}
+.today{background:#2563eb;color:white;font-weight:bold;}
+.nav{position:fixed;bottom:0;left:0;right:0;background:white;padding:10px;display:flex;justify-content:space-around;border-top:1px solid #ddd;}
 button{cursor:pointer;}
 </style>
 </head>
@@ -317,71 +302,64 @@ button{cursor:pointer;}
 <body>
 
 <div id="dashboard">
-  <h1>🌿 FocusLife</h1>
-  <div class="subtitle">細節成就卓越</div>
-
-  <div class="stats">
-    <div class="stat-card">
-      🎯 今日任務<br><strong id="statTasks">0</strong>
-    </div>
-    <div class="stat-card">
-      🔥 今日習慣<br><strong id="statHabits">0</strong>
-    </div>
-    <div class="stat-card">
-      ⚠️ 過期任務<br><strong id="statOverdue">0</strong>
-    </div>
-  </div>
-
-  <h3>🎯 今日焦點</h3>
-  <div id="todayFocus"></div>
-
-  <h3>🔥 今日習慣</h3>
-  <div id="habitStatus"></div>
+<h1>🌿 FocusLife</h1>
+<div>細節成就卓越</div>
+<div class="card">🎯 進行中任務：<span id="statTasks">0</span></div>
+<div class="card">✅ 已完成任務：<span id="statCompleted">0</span></div>
+<h3>今日焦點</h3>
+<div id="todayFocus"></div>
 </div>
 
 <div id="tasks" style="display:none;">
-  <h2>📝 任務</h2>
+<h2>📝 任務</h2>
 
-  <div style="margin-bottom:10px;">
-    <button onclick="changeCategory('全部')">全部</button>
-    <button onclick="changeCategory('工作')">工作</button>
-    <button onclick="changeCategory('學習')">學習</button>
-    <button onclick="changeCategory('運動')">運動</button>
-    <button onclick="changeCategory('生活')">生活</button>
-    <button onclick="changeCategory('嗜好小組')">嗜好小組</button>
-  </div>
+<div>
+<button onclick="changeCategory('全部')">全部</button>
+<button onclick="changeCategory('工作')">工作</button>
+<button onclick="changeCategory('學習')">學習</button>
+<button onclick="changeCategory('運動')">運動</button>
+<button onclick="changeCategory('生活')">生活</button>
+<button onclick="changeCategory('嗜好小組')">嗜好小組</button>
+</div>
 
-  <input id="taskInput" placeholder="任務名稱">
-  <input id="taskNote" placeholder="備註">
-  <select id="categorySelect">
-    <option>工作</option>
-    <option>學習</option>
-    <option>運動</option>
-    <option>生活</option>
-    <option>嗜好小組</option>
-  </select>
-  <button onclick="addTask()">新增</button>
+<input id="taskInput" placeholder="任務名稱">
+<input id="taskNote" placeholder="備註">
+<input type="date" id="taskDue">
+<select id="categorySelect">
+<option>工作</option>
+<option>學習</option>
+<option>運動</option>
+<option>生活</option>
+<option>嗜好小組</option>
+</select>
+<button onclick="addTask()">新增</button>
 
-  <div id="tasksContainer"></div>
+<div id="tasksContainer"></div>
+</div>
+
+<div id="completed" style="display:none;">
+<h2>✅ 已完成任務</h2>
+<div id="completedContainer"></div>
 </div>
 
 <div id="habits" style="display:none;">
-  <h2>🔥 習慣</h2>
-  <input id="habitInput" placeholder="習慣名稱">
-  <button onclick="addHabit()">新增</button>
-  <div id="habitContainer"></div>
+<h2>🔥 習慣</h2>
+<input id="habitInput" placeholder="習慣名稱">
+<button onclick="addHabit()">新增</button>
+<div id="habitContainer"></div>
 </div>
 
 <div id="calendar" style="display:none;">
-  <h2>📅 月曆</h2>
-  <div class="calendar" id="calendarContainer"></div>
+<h2 id="calendarTitle"></h2>
+<div class="calendar" id="calendarContainer"></div>
 </div>
 
 <div class="nav">
-  <span onclick="switchPage('dashboard')">🏠</span>
-  <span onclick="switchPage('tasks')">📝</span>
-  <span onclick="switchPage('habits')">🔥</span>
-  <span onclick="switchPage('calendar')">📅</span>
+<span onclick="switchPage('dashboard')">🏠</span>
+<span onclick="switchPage('tasks')">📝</span>
+<span onclick="switchPage('completed')">✅</span>
+<span onclick="switchPage('habits')">🔥</span>
+<span onclick="switchPage('calendar')">📅</span>
 </div>
 
 </body>
