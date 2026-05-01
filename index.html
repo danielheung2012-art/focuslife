@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.2</title>
+<title>FocusLife v17.3</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -20,8 +20,6 @@ import {
   serverTimestamp
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
-/* ---------- Firebase ---------- */
-
 const firebaseConfig = {
   apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
   authDomain: "focuslife-app-eeba5.firebaseapp.com",
@@ -31,14 +29,10 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-/* ---------- 香港時間 ---------- */
-
 function getHKToday(){
   return new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Hong_Kong"});
 }
 const today = getHKToday();
-
-/* ---------- State ---------- */
 
 const state = {
   tasks: [],
@@ -77,19 +71,28 @@ window.deleteCategory = async function(id){
 window.changeCategory=function(cat){
   currentCategory=cat;
   renderTasks();
+  renderCategoryUI();
 };
 
 function renderCategoryUI(){
-  const btn=document.getElementById("categoryButtons");
+  const container=document.getElementById("categoryScroll");
   const sel=document.getElementById("categorySelect");
 
-  btn.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
+  container.innerHTML="";
   sel.innerHTML="";
 
+  // 全部
+  container.innerHTML+=`
+    <div class="cat-item ${currentCategory==="全部"?"active":""}"
+      onclick="changeCategory('全部')">全部</div>
+  `;
+
   state.categories.forEach(cat=>{
-    btn.innerHTML+=`
-      <button onclick="changeCategory('${cat.name}')">${cat.name}</button>
-      <button onclick="deleteCategory('${cat.id}')">❌</button>
+    container.innerHTML+=`
+      <div class="cat-item ${currentCategory===cat.name?"active":""}"
+        onclick="changeCategory('${cat.name}')">
+        ${cat.name}
+      </div>
     `;
     sel.innerHTML+=`<option>${cat.name}</option>`;
   });
@@ -229,40 +232,6 @@ function renderCalendar(){
   }
 }
 
-/* ---------- 浮層 ---------- */
-
-window.openCalendarModal=function(date){
-  const box=document.getElementById("calendarModal");
-  const content=document.getElementById("modalContent");
-  content.innerHTML="";
-
-  const tasks=state.tasks.filter(t=>t.dueDate===date);
-
-  content.innerHTML+=`<div><strong>${date}</strong></div>`;
-  content.innerHTML+=`<div style="margin-top:10px;">任務：</div>`;
-
-  if(tasks.length===0){
-    content.innerHTML+=`<div style="color:#777;">當天沒有任務</div>`;
-  }else{
-    tasks.forEach(t=>{
-      content.innerHTML+=`<div>• ${t.title}</div>`;
-    });
-  }
-
-  content.innerHTML+=`
-    <div style="margin-top:10px;">
-      <input id="modalInput" placeholder="新增任務">
-      <button onclick="addTask(document.getElementById('modalInput').value,'${date}')">新增</button>
-    </div>
-  `;
-
-  box.style.display="flex";
-};
-
-window.closeCalendarModal=function(){
-  document.getElementById("calendarModal").style.display="none";
-};
-
 /* ---------- 初始化 ---------- */
 
 loadCategories();
@@ -272,6 +241,30 @@ loadTasks();
 
 <style>
 body{font-family:Arial;background:#f6f7f9;padding:20px;}
+
+.category-scroll{
+  display:flex;
+  overflow-x:auto;
+  gap:8px;
+  padding-bottom:6px;
+  margin-bottom:10px;
+}
+
+.cat-item{
+  flex:0 0 auto;
+  padding:6px 14px;
+  background:#e5e7eb;
+  border-radius:20px;
+  font-size:14px;
+  cursor:pointer;
+  white-space:nowrap;
+}
+
+.cat-item.active{
+  background:#2563eb;
+  color:white;
+}
+
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
 .task-row{display:flex;justify-content:space-between;}
 .completed{text-decoration:line-through;color:#aaa;}
@@ -280,20 +273,20 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 .icon-btn{background:none;border:none;font-size:14px;cursor:pointer;opacity:0.6;}
 .icon-btn:hover{opacity:1;}
 .note-box textarea{width:100%;margin-top:6px;background:#f2f2f2;border:none;padding:6px;border-radius:8px;}
+
 .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
 .weekday{text-align:center;font-size:12px;color:#666;}
 .calendar-day{position:relative;background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
 .today{background:#2563eb;color:white;}
 .task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;position:absolute;bottom:4px;left:4px;}
-.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;justify-content:center;align-items:center;}
-.modal-box{background:white;padding:20px;border-radius:12px;width:280px;}
 </style>
 </head>
 
 <body>
 
 <h3>分類</h3>
-<div id="categoryButtons"></div>
+<div class="category-scroll" id="categoryScroll"></div>
+
 <input id="newCategory" placeholder="新增分類">
 <button onclick="addCategory()">新增分類</button>
 
@@ -310,13 +303,6 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 <span id="calendarTitle"></span>
 <button onclick="changeMonth(1)">›</button>
 <div class="calendar" id="calendarContainer"></div>
-
-<div id="calendarModal" class="modal">
-  <div class="modal-box">
-    <div id="modalContent"></div>
-    <button onclick="closeCalendarModal()" style="margin-top:10px;">關閉</button>
-  </div>
-</div>
 
 </body>
 </html>
