@@ -13,6 +13,7 @@ import {
   addDoc,
   onSnapshot,
   query,
+  where,
   orderBy,
   serverTimestamp,
   doc,
@@ -32,6 +33,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
+function todayString() {
+  return new Date().toISOString().split("T")[0];
+}
+
+const today = todayString();
+
 /* 新增任務 */
 window.addTask = async function() {
   const input = document.getElementById("taskInput");
@@ -41,6 +48,7 @@ window.addTask = async function() {
   await addDoc(collection(db, "tasks"), {
     title: title,
     completed: false,
+    date: today,
     created: serverTimestamp()
   });
 
@@ -59,17 +67,26 @@ window.deleteTask = async function(id) {
   await deleteDoc(doc(db, "tasks", id));
 };
 
-/* 即時同步 */
-const q = query(collection(db, "tasks"), orderBy("created"));
+/* 讀取今天任務 */
+const q = query(
+  collection(db, "tasks"),
+  where("date", "==", today),
+  orderBy("created")
+);
 
 onSnapshot(q, (snapshot) => {
   const list = document.getElementById("taskList");
   list.innerHTML = "";
 
+  let total = 0;
+  let completed = 0;
+
   snapshot.forEach((docItem) => {
     const data = docItem.data();
-    const li = document.createElement("li");
+    total++;
+    if (data.completed) completed++;
 
+    const li = document.createElement("li");
     li.innerHTML = `
       <input type="checkbox" ${data.completed ? "checked" : ""} 
         onchange="toggleTask('${docItem.id}', ${data.completed})">
@@ -78,9 +95,15 @@ onSnapshot(q, (snapshot) => {
       </span>
       <button onclick="deleteTask('${docItem.id}')">❌</button>
     `;
-
     list.appendChild(li);
   });
+
+  /* 更新完成率 */
+  const rate = total === 0 ? 0 : Math.round((completed / total) * 100);
+  document.getElementById("progressText").innerText =
+    `完成率：${rate}% (${completed}/${total})`;
+
+  document.getElementById("progressBar").style.width = rate + "%";
 });
 </script>
 
@@ -91,7 +114,7 @@ body {
   background: #f4f6f9;
 }
 
-input[type="text"], button {
+input, button {
   padding: 8px;
   margin: 5px 0;
 }
@@ -107,17 +130,43 @@ button {
 li {
   margin: 8px 0;
 }
+
+.progress-container {
+  width: 100%;
+  background: #ddd;
+  border-radius: 6px;
+  margin: 10px 0;
+}
+
+.progress-bar {
+  height: 20px;
+  width: 0%;
+  background: #22c55e;
+  border-radius: 6px;
+  transition: 0.3s;
+}
 </style>
 </head>
 
 <body>
 
 <h2>🌿 FocusLife Online</h2>
+<p>今日日期：<span id="todayDisplay"></span></p>
 
-<input id="taskInput" placeholder="輸入任務">
+<input id="taskInput" placeholder="輸入今日任務">
 <button onclick="addTask()">新增任務</button>
 
+<h3 id="progressText">完成率：0%</h3>
+<div class="progress-container">
+  <div id="progressBar" class="progress-bar"></div>
+</div>
+
 <ul id="taskList"></ul>
+
+<script>
+document.getElementById("todayDisplay").innerText =
+  new Date().toISOString().split("T")[0];
+</script>
 
 </body>
 </html>
