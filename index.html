@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v13</title>
+<title>FocusLife v13.1</title>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
@@ -17,8 +19,7 @@ import {
   serverTimestamp,
   doc,
   updateDoc,
-  deleteDoc,
-  getDocs
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 /* ---------------- Firebase ---------------- */
@@ -39,17 +40,18 @@ const state = {
   habits: []
 };
 
+let currentCategory = "全部";
 const today = new Date().toISOString().split("T")[0];
 
 /* ---------------- 資料載入 ---------------- */
 
 function loadData(){
-  onSnapshot(query(collection(db,"tasks"),orderBy("created")), snapshot=>{
+  onSnapshot(query(collection(db,"tasks")), snapshot=>{
     state.tasks = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
 
-  onSnapshot(query(collection(db,"habits"),orderBy("createdAt")), snapshot=>{
+  onSnapshot(query(collection(db,"habits")), snapshot=>{
     state.habits = snapshot.docs.map(d=>({id:d.id,...d.data()}));
     renderAll();
   });
@@ -98,6 +100,11 @@ function renderDashboard(){
 
 /* ---------------- 任務系統 ---------------- */
 
+window.changeCategory = function(cat){
+  currentCategory = cat;
+  renderTasks();
+};
+
 window.addTask = async function(){
   const title = document.getElementById("taskInput").value.trim();
   const note = document.getElementById("taskNote").value.trim();
@@ -110,6 +117,7 @@ window.addTask = async function(){
     note,
     category,
     completed:false,
+    order: Date.now(),
     created:serverTimestamp()
   });
 
@@ -123,30 +131,58 @@ window.toggleTask = async (id,current)=>
 window.deleteTask = async (id)=>
   await deleteDoc(doc(db,"tasks",id));
 
-function renderTasks(){
-  const container=document.getElementById("tasksContainer");
-  container.innerHTML="";
-
-  state.tasks.forEach(task=>{
-    container.innerHTML+=`
-      <div class="card">
-        <input type="checkbox" ${task.completed?"checked":""}
-          onchange="toggleTask('${task.id}',${task.completed})">
-        ${task.title}
-        <button onclick="toggleNote('${task.id}')">📝</button>
-        <button onclick="deleteTask('${task.id}')">❌</button>
-        <div id="note-${task.id}" class="note">
-          ${task.note||"無備註"}
-        </div>
-      </div>
-    `;
-  });
-}
+window.saveNote = async function(id){
+  const value = document.getElementById("note-input-"+id).value;
+  await updateDoc(doc(db,"tasks",id),{note:value});
+};
 
 window.toggleNote=function(id){
   const el=document.getElementById("note-"+id);
   el.style.display = el.style.display==="block"?"none":"block";
 };
+
+function renderTasks(){
+  const container=document.getElementById("tasksContainer");
+  container.innerHTML="";
+
+  const tasks = state.tasks
+    .filter(t => currentCategory==="全部" || t.category===currentCategory)
+    .sort((a,b)=>(a.order||0)-(b.order||0));
+
+  tasks.forEach(task=>{
+    container.innerHTML+=`
+      <div class="card" data-id="${task.id}">
+        <div class="task-row">
+          <div>
+            <input type="checkbox" ${task.completed?"checked":""}
+              onchange="toggleTask('${task.id}',${task.completed})">
+            ${task.title}
+          </div>
+          <div>
+            <button onclick="toggleNote('${task.id}')">📝</button>
+            <button onclick="deleteTask('${task.id}')">❌</button>
+          </div>
+        </div>
+
+        <div id="note-${task.id}" class="note">
+          <textarea id="note-input-${task.id}" class="note-input">${task.note||""}</textarea>
+          <button onclick="saveNote('${task.id}')">💾 儲存</button>
+        </div>
+      </div>
+    `;
+  });
+
+  new Sortable(container,{
+    animation:150,
+    onEnd: async function(){
+      const items = container.children;
+      for(let i=0;i<items.length;i++){
+        const id = items[i].dataset.id;
+        await updateDoc(doc(db,"tasks",id),{order:i});
+      }
+    }
+  });
+}
 
 /* ---------------- 習慣系統 ---------------- */
 
@@ -235,71 +271,46 @@ loadData();
 </script>
 
 <style>
-body{font-family:Arial;background:#f4f6f9;padding:20px;}
-
+body{font-family:Arial;background:#f4f6f9;padding:20px;margin-bottom:60px;}
 h1{margin-bottom:5px;}
 .subtitle{color:#666;margin-bottom:20px;}
 
 .stats{display:flex;gap:10px;margin-bottom:20px;}
 .stat-card{
-  flex:1;
-  background:white;
-  padding:15px;
-  border-radius:14px;
-  text-align:center;
-  box-shadow:0 4px 10px rgba(0,0,0,0.05);
+  flex:1;background:white;padding:15px;border-radius:14px;
+  text-align:center;box-shadow:0 4px 10px rgba(0,0,0,0.05);
 }
 
 .card{
-  background:white;
-  padding:12px;
-  margin:8px 0;
-  border-radius:10px;
-  box-shadow:0 3px 8px rgba(0,0,0,0.04);
+  background:white;padding:12px;margin:8px 0;
+  border-radius:10px;box-shadow:0 3px 8px rgba(0,0,0,0.04);
 }
 
-.note{
-  display:none;
-  font-size:12px;
-  color:#555;
-  margin-top:5px;
-}
+.task-row{display:flex;justify-content:space-between;align-items:center;}
+
+.note{display:none;margin-top:8px;}
+.note-input{width:100%;min-height:60px;}
 
 .empty{color:#888;font-size:14px;}
 
-.calendar{
-  display:grid;
-  grid-template-columns:repeat(7,1fr);
-  gap:5px;
-}
-
+.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
 .calendar-day{
-  background:white;
-  padding:10px;
-  text-align:center;
-  border-radius:8px;
-  position:relative;
+  background:white;padding:10px;text-align:center;
+  border-radius:8px;position:relative;
 }
-
 .dot{
-  width:6px;height:6px;
-  background:#2563eb;
-  border-radius:50%;
-  position:absolute;
-  bottom:4px;
-  left:50%;
-  transform:translateX(-50%);
+  width:6px;height:6px;background:#2563eb;
+  border-radius:50%;position:absolute;
+  bottom:4px;left:50%;transform:translateX(-50%);
 }
 
 .nav{
-  position:fixed;
-  bottom:0;left:0;right:0;
-  background:white;
-  padding:10px;
-  display:flex;
-  justify-content:space-around;
+  position:fixed;bottom:0;left:0;right:0;
+  background:white;padding:10px;
+  display:flex;justify-content:space-around;
   border-top:1px solid #ddd;
 }
+button{cursor:pointer;}
 </style>
 </head>
 
@@ -311,16 +322,13 @@ h1{margin-bottom:5px;}
 
   <div class="stats">
     <div class="stat-card">
-      🎯 今日任務<br>
-      <strong id="statTasks">0</strong>
+      🎯 今日任務<br><strong id="statTasks">0</strong>
     </div>
     <div class="stat-card">
-      🔥 今日習慣<br>
-      <strong id="statHabits">0</strong>
+      🔥 今日習慣<br><strong id="statHabits">0</strong>
     </div>
     <div class="stat-card">
-      ⚠️ 過期任務<br>
-      <strong id="statOverdue">0</strong>
+      ⚠️ 過期任務<br><strong id="statOverdue">0</strong>
     </div>
   </div>
 
@@ -333,6 +341,16 @@ h1{margin-bottom:5px;}
 
 <div id="tasks" style="display:none;">
   <h2>📝 任務</h2>
+
+  <div style="margin-bottom:10px;">
+    <button onclick="changeCategory('全部')">全部</button>
+    <button onclick="changeCategory('工作')">工作</button>
+    <button onclick="changeCategory('學習')">學習</button>
+    <button onclick="changeCategory('運動')">運動</button>
+    <button onclick="changeCategory('生活')">生活</button>
+    <button onclick="changeCategory('嗜好小組')">嗜好小組</button>
+  </div>
+
   <input id="taskInput" placeholder="任務名稱">
   <input id="taskNote" placeholder="備註">
   <select id="categorySelect">
@@ -343,6 +361,7 @@ h1{margin-bottom:5px;}
     <option>嗜好小組</option>
   </select>
   <button onclick="addTask()">新增</button>
+
   <div id="tasksContainer"></div>
 </div>
 
