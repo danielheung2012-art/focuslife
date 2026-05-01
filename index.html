@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FocusLife Stable</title>
 
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
-
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import {
@@ -23,31 +21,39 @@ import {
   getDocs
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
+/* ✅ 你的 Firebase 設定 */
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_AUTH_DOMAIN",
-  projectId: "YOUR_PROJECT_ID"
+  apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
+  authDomain: "focuslife-app-eeba5.firebaseapp.com",
+  projectId: "focuslife-app-eeba5",
+  storageBucket: "focuslife-app-eeba5.firebasestorage.app",
+  messagingSenderId: "158865821183",
+  appId: "1:158865821183:web:f30ea26338e4af8d362bca"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 let categories = [];
-let unsubscribeTasks = null;
 
 /* ✅ 載入分類 */
 async function loadCategories() {
-  const snapshot = await getDocs(collection(db, "categories"));
-  categories = snapshot.docs.map(doc => doc.data().name);
+  try {
+    const snapshot = await getDocs(collection(db, "categories"));
+    categories = snapshot.docs.map(doc => doc.data().name);
 
-  if (categories.length === 0) {
-    categories = ["工作", "學習", "運動", "生活", "嗜好小組"];
-    for (let cat of categories) {
-      await addDoc(collection(db, "categories"), { name: cat });
+    /* 如果沒有分類，自動建立 */
+    if (categories.length === 0) {
+      categories = ["工作", "學習", "運動", "生活", "嗜好小組"];
+      for (let cat of categories) {
+        await addDoc(collection(db, "categories"), { name: cat });
+      }
     }
-  }
 
-  renderCategoryOptions();
+    renderCategoryOptions();
+  } catch (error) {
+    console.error("分類載入錯誤:", error);
+  }
 }
 
 /* ✅ 顯示分類下拉 */
@@ -55,7 +61,10 @@ function renderCategoryOptions() {
   const select = document.getElementById("categorySelect");
   select.innerHTML = "";
   categories.forEach(cat => {
-    select.innerHTML += `<option>${cat}</option>`;
+    const option = document.createElement("option");
+    option.value = cat;
+    option.textContent = cat;
+    select.appendChild(option);
   });
 }
 
@@ -63,6 +72,7 @@ function renderCategoryOptions() {
 window.addCategory = async function() {
   const name = prompt("輸入新分類名稱");
   if (!name) return;
+
   await addDoc(collection(db, "categories"), { name });
   await loadCategories();
 };
@@ -71,6 +81,7 @@ window.addCategory = async function() {
 window.addTask = async function() {
   const title = document.getElementById("taskInput").value.trim();
   const category = document.getElementById("categorySelect").value;
+
   if (!title) return;
 
   await addDoc(collection(db, "tasks"), {
@@ -107,7 +118,7 @@ window.togglePin = async function(id, current) {
 function loadTasks() {
   const q = query(collection(db, "tasks"), orderBy("created"));
 
-  unsubscribeTasks = onSnapshot(q, (snapshot) => {
+  onSnapshot(q, (snapshot) => {
     const container = document.getElementById("taskContainer");
     container.innerHTML = "";
 
@@ -116,11 +127,7 @@ function loadTasks() {
 
     snapshot.forEach(docItem => {
       const data = docItem.data();
-
-      if (!grouped[data.category]) {
-        grouped[data.category] = [];
-      }
-
+      if (!grouped[data.category]) grouped[data.category] = [];
       grouped[data.category].push({
         id: docItem.id,
         ...data
@@ -134,7 +141,7 @@ function loadTasks() {
       section.innerHTML = `<h3>📂 ${cat}</h3>`;
       const ul = document.createElement("ul");
 
-      /* ✅ 前端排序：pinned 在前 */
+      /* ✅ 前端排序：置頂優先 */
       grouped[cat]
         .sort((a, b) => (b.pinned === true) - (a.pinned === true))
         .forEach(task => {
@@ -180,7 +187,7 @@ h3 { margin-top: 20px; }
 
 <body>
 
-<h2>🌿 FocusLife Stable</h2>
+<h2>🌿 FocusLife</h2>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="輸入任務">
