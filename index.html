@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FocusLife Online</title>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
 import {
@@ -18,7 +20,8 @@ import {
   serverTimestamp,
   doc,
   updateDoc,
-  deleteDoc
+  deleteDoc,
+  getDocs
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 const firebaseConfig = {
@@ -37,136 +40,161 @@ function todayString() {
   return new Date().toISOString().split("T")[0];
 }
 
-const today = todayString();
+function getLast7Days() {
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date();
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().split("T")[0]);
+  }
+  return days;
+}
 
-/* 新增任務 */
 window.addTask = async function() {
-  const input = document.getElementById("taskInput");
-  const title = input.value.trim();
+  const title = document.getElementById("taskInput").value.trim();
+  const category = document.getElementById("categorySelect").value;
   if (!title) return;
 
   await addDoc(collection(db, "tasks"), {
-    title: title,
+    title,
+    category,
     completed: false,
-    date: today,
+    date: todayString(),
     created: serverTimestamp()
   });
 
-  input.value = "";
+  document.getElementById("taskInput").value = "";
 };
 
-/* 勾選完成 */
-window.toggleTask = async function(id, currentStatus) {
+window.toggleTask = async function(id, current) {
   await updateDoc(doc(db, "tasks", id), {
-    completed: !currentStatus
+    completed: !current
   });
 };
 
-/* 刪除任務 */
 window.deleteTask = async function(id) {
   await deleteDoc(doc(db, "tasks", id));
 };
 
-/* 讀取今天任務 */
-const q = query(
-  collection(db, "tasks"),
-  where("date", "==", today),
-  orderBy("created")
-);
+function loadTodayTasks() {
+  const q = query(
+    collection(db, "tasks"),
+    where("date", "==", todayString()),
+    orderBy("created")
+  );
 
-onSnapshot(q, (snapshot) => {
-  const list = document.getElementById("taskList");
-  list.innerHTML = "";
+  onSnapshot(q, (snapshot) => {
+    const list = document.getElementById("taskList");
+    list.innerHTML = "";
 
-  let total = 0;
-  let completed = 0;
-
-  snapshot.forEach((docItem) => {
-    const data = docItem.data();
-    total++;
-    if (data.completed) completed++;
-
-    const li = document.createElement("li");
-    li.innerHTML = `
-      <input type="checkbox" ${data.completed ? "checked" : ""} 
-        onchange="toggleTask('${docItem.id}', ${data.completed})">
-      <span style="text-decoration:${data.completed ? "line-through" : "none"}">
-        ${data.title}
-      </span>
-      <button onclick="deleteTask('${docItem.id}')">❌</button>
-    `;
-    list.appendChild(li);
+    snapshot.forEach((docItem) => {
+      const data = docItem.data();
+      const li = document.createElement("li");
+      li.innerHTML = `
+        <input type="checkbox" ${data.completed ? "checked" : ""}
+          onchange="toggleTask('${docItem.id}', ${data.completed})">
+        <span style="text-decoration:${data.completed ? "line-through" : "none"}">
+          ${data.title} (${data.category})
+        </span>
+        <button onclick="deleteTask('${docItem.id}')">❌</button>
+      `;
+      list.appendChild(li);
+    });
   });
+}
 
-  /* 更新完成率 */
-  const rate = total === 0 ? 0 : Math.round((completed / total) * 100);
-  document.getElementById("progressText").innerText =
-    `完成率：${rate}% (${completed}/${total})`;
+let chart;
 
-  document.getElementById("progressBar").style.width = rate + "%";
-});
+window.loadWeeklyStats = async function() {
+  const selectedCategory = document.getElementById("filterCategory").value;
+  const last7Days = getLast7Days();
+  const results = [];
+
+  for (let day of last7Days) {
+    let q = query(
+      collection(db, "tasks"),
+      where("date", "==", day),
+      where("completed", "==", true)
+    );
+
+    if (selectedCategory !== "全部") {
+      q = query(
+        collection(db, "tasks"),
+        where("date", "==", day),
+        where("completed", "==", true),
+        where("category", "==", selectedCategory)
+      );
+    }
+
+    const snapshot = await getDocs(q);
+    results.push(snapshot.size);
+  }
+
+  if (chart) chart.destroy();
+
+  const ctx = document.getElementById("weeklyChart");
+  chart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels: last7Days,
+      datasets: [{
+        label: "完成數量",
+        data: results,
+        backgroundColor: "#2563eb"
+      }]
+    }
+  });
+};
+
+loadTodayTasks();
 </script>
 
 <style>
-body {
-  font-family: Arial;
-  padding: 20px;
-  background: #f4f6f9;
-}
-
-input, button {
-  padding: 8px;
-  margin: 5px 0;
-}
-
-button {
-  background: #2563eb;
-  color: white;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-li {
-  margin: 8px 0;
-}
-
-.progress-container {
-  width: 100%;
-  background: #ddd;
-  border-radius: 6px;
-  margin: 10px 0;
-}
-
-.progress-bar {
-  height: 20px;
-  width: 0%;
-  background: #22c55e;
-  border-radius: 6px;
-  transition: 0.3s;
-}
+body { font-family: Arial; padding: 20px; background: #f4f6f9; }
+input, select, button { padding: 8px; margin: 5px 0; }
+button { background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
+li { margin: 8px 0; }
+canvas { margin-top: 20px; }
 </style>
 </head>
 
 <body>
 
 <h2>🌿 FocusLife Online</h2>
-<p>今日日期：<span id="todayDisplay"></span></p>
 
+<h3>新增任務</h3>
 <input id="taskInput" placeholder="輸入今日任務">
-<button onclick="addTask()">新增任務</button>
 
-<h3 id="progressText">完成率：0%</h3>
-<div class="progress-container">
-  <div id="progressBar" class="progress-bar"></div>
-</div>
+<select id="categorySelect">
+  <option>工作</option>
+  <option>學習</option>
+  <option>運動</option>
+  <option>自我成長</option>
+  <option>生活</option>
+  <option>其他</option>
+</select>
+
+<button onclick="addTask()">新增任務</button>
 
 <ul id="taskList"></ul>
 
-<script>
-document.getElementById("todayDisplay").innerText =
-  new Date().toISOString().split("T")[0];
-</script>
+<hr>
+
+<h3>📊 每週統計</h3>
+
+<select id="filterCategory">
+  <option>全部</option>
+  <option>工作</option>
+  <option>學習</option>
+  <option>運動</option>
+  <option>自我成長</option>
+  <option>生活</option>
+  <option>其他</option>
+</select>
+
+<button onclick="loadWeeklyStats()">查看統計</button>
+
+<canvas id="weeklyChart"></canvas>
 
 </body>
 </html>
