@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.4</title>
+<title>FocusLife v17.5</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -30,19 +30,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-function getHKToday(){
-  return new Date().toLocaleDateString("en-CA",{timeZone:"Asia/Hong_Kong"});
-}
-const today = getHKToday();
-
-const state = {
-  tasks: [],
-  categories: []
-};
-
+const state = { tasks: [], categories: [] };
 let currentCategory = "全部";
-let currentYear = new Date().getFullYear();
-let currentMonth = new Date().getMonth();
 
 /* ---------- 分類 ---------- */
 
@@ -67,7 +56,6 @@ window.addCategory = async function(){
 
 window.deleteCategory = async function(id,name){
 
-  // 將任務改為未分類
   const tasksSnap = await getDocs(collection(db,"tasks"));
   for(const t of tasksSnap.docs){
     if(t.data().category===name){
@@ -90,6 +78,9 @@ window.changeCategory=function(cat){
   renderCategoryUI();
 };
 
+let longPressTimer = null;
+let activeDelete = null;
+
 function renderCategoryUI(){
   const container=document.getElementById("categoryScroll");
   const sel=document.getElementById("categorySelect");
@@ -97,28 +88,50 @@ function renderCategoryUI(){
   container.innerHTML="";
   sel.innerHTML=`<option>未分類</option>`;
 
-  // 全部
-  container.innerHTML+=`
-    <div class="cat-item ${currentCategory==="全部"?"active":""}"
-      onclick="changeCategory('全部')">全部</div>
-  `;
+  function createCat(name,id){
+    const div=document.createElement("div");
+    div.className="cat-item"+(currentCategory===name?" active":"");
+    div.innerHTML=`<span>${name}</span><span class="delete-btn">✕</span>`;
 
-  // 未分類
-  container.innerHTML+=`
-    <div class="cat-item ${currentCategory==="未分類"?"active":""}"
-      onclick="changeCategory('未分類')">未分類</div>
-  `;
+    const del=div.querySelector(".delete-btn");
+    del.style.display="none";
+
+    div.onclick=()=>changeCategory(name);
+
+    div.addEventListener("touchstart",()=>{
+      longPressTimer=setTimeout(()=>{
+        if(activeDelete) activeDelete.style.display="none";
+        del.style.display="inline";
+        activeDelete=del;
+      },800);
+    });
+
+    div.addEventListener("touchend",()=>{
+      clearTimeout(longPressTimer);
+    });
+
+    del.onclick=(e)=>{
+      e.stopPropagation();
+      deleteCategory(id,name);
+    };
+
+    container.appendChild(div);
+  }
+
+  createCat("全部");
+  createCat("未分類");
 
   state.categories.forEach(cat=>{
-    container.innerHTML+=`
-      <div class="cat-item ${currentCategory===cat.name?"active":""}">
-        <span onclick="changeCategory('${cat.name}')">${cat.name}</span>
-        <span class="delete-btn"
-          onclick="deleteCategory('${cat.id}','${cat.name}')">✕</span>
-      </div>
-    `;
+    createCat(cat.name,cat.id);
     sel.innerHTML+=`<option>${cat.name}</option>`;
   });
+
+  document.body.onclick=()=>{
+    if(activeDelete){
+      activeDelete.style.display="none";
+      activeDelete=null;
+    }
+  };
 }
 
 /* ---------- 任務 ---------- */
@@ -127,21 +140,22 @@ function loadTasks(){
   onSnapshot(collection(db,"tasks"), snap=>{
     state.tasks = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderTasks();
-    renderCalendar();
   });
 }
 
-window.addTask = async function(title,dueDate){
-  const taskTitle = title || document.getElementById("taskInput").value.trim();
-  const taskDue = dueDate || document.getElementById("taskDue").value;
-  const category = document.getElementById("categorySelect").value;
+window.addTask = async function(){
+  const title=document.getElementById("taskInput").value.trim();
+  const due=document.getElementById("taskDue").value;
+  const category=document.getElementById("categorySelect").value;
+  const priority=document.getElementById("prioritySelect").value;
 
-  if(!taskTitle) return;
+  if(!title) return;
 
   await addDoc(collection(db,"tasks"),{
-    title:taskTitle,
-    dueDate:taskDue||"",
+    title,
+    dueDate:due||"",
     category:category||"未分類",
+    priority:priority||"中",
     note:"",
     completed:false,
     order:Date.now(),
@@ -161,15 +175,11 @@ window.deleteTask = async id=>{
   await deleteDoc(doc(db,"tasks",id));
 };
 
-window.saveNote = async function(id){
-  const val=document.getElementById("note-"+id).value;
-  await updateDoc(doc(db,"tasks",id),{note:val});
-};
-
-window.toggleNote=function(id){
-  const el=document.getElementById("note-box-"+id);
-  el.style.display = el.style.display==="block"?"none":"block";
-};
+function priorityClass(p){
+  if(p==="高") return "p-high";
+  if(p==="中") return "p-mid";
+  return "p-low";
+}
 
 function renderTasks(){
   const container=document.getElementById("tasksContainer");
@@ -190,16 +200,11 @@ function renderTasks(){
             <input type="checkbox" ${task.completed?"checked":""}
               onchange='toggleTask(${JSON.stringify(task)})'>
             ${task.title}
-            ${task.dueDate?`<span class="due">${task.dueDate}</span>`:""}
-            ${task.category?`<span class="tag">${task.category}</span>`:""}
+            ${task.priority?`<span class="priority ${priorityClass(task.priority)}">${task.priority}</span>`:""}
           </div>
           <div>
-            <button class="icon-btn" onclick="toggleNote('${task.id}')">📝</button>
-            <button class="icon-btn delete" onclick="deleteTask('${task.id}')">✕</button>
+            <button class="icon-btn" onclick="deleteTask('${task.id}')">✕</button>
           </div>
-        </div>
-        <div id="note-box-${task.id}" class="note-box" style="display:none;">
-          <textarea id="note-${task.id}" onchange="saveNote('${task.id}')">${task.note||""}</textarea>
         </div>
       </div>
     `;
@@ -254,18 +259,25 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 
 .delete-btn{
   font-size:12px;
-  opacity:0.6;
-  cursor:pointer;
+  color:#dc2626;
 }
 
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
-.task-row{display:flex;justify-content:space-between;}
+.task-row{display:flex;justify-content:space-between;align-items:center;}
 .completed{text-decoration:line-through;color:#aaa;}
-.due{font-size:12px;color:#777;margin-left:6px;}
-.tag{background:#e8f0ff;color:#2563eb;padding:2px 6px;border-radius:6px;font-size:12px;margin-left:6px;}
-.icon-btn{background:none;border:none;font-size:14px;cursor:pointer;opacity:0.6;}
-.icon-btn:hover{opacity:1;}
-.note-box textarea{width:100%;margin-top:6px;background:#f2f2f2;border:none;padding:6px;border-radius:8px;}
+
+.priority{
+  padding:2px 8px;
+  border-radius:12px;
+  font-size:12px;
+  margin-left:8px;
+}
+
+.p-high{background:#fee2e2;color:#b91c1c;}
+.p-mid{background:#ffedd5;color:#c2410c;}
+.p-low{background:#e5e7eb;color:#374151;}
+
+.icon-btn{background:none;border:none;font-size:14px;cursor:pointer;}
 </style>
 </head>
 
@@ -280,7 +292,15 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="任務名稱">
 <input type="date" id="taskDue">
+
 <select id="categorySelect"></select>
+
+<select id="prioritySelect">
+  <option value="高">高</option>
+  <option value="中" selected>中</option>
+  <option value="低">低</option>
+</select>
+
 <button onclick="addTask()">新增</button>
 
 <div id="tasksContainer"></div>
