@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.1</title>
+<title>FocusLife v17.2</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -42,68 +42,68 @@ const today = getHKToday();
 
 const state = {
   tasks: [],
-  categories: ["工作","學習","運動","生活"]
+  categories: []
 };
 
 let currentCategory = "全部";
 let currentYear = new Date().getFullYear();
 let currentMonth = new Date().getMonth();
 
-/* ---------- 節日 ---------- */
+/* ---------- 分類雲端同步 ---------- */
 
-const fixedHolidays = [
-  { month:1, day:1, name:"元旦" },
-  { month:7, day:1, name:"香港回歸紀念日" },
-  { month:10, day:1, name:"國慶日" },
-  { month:12, day:25, name:"聖誕節" }
-];
-
-function getMotherDay(year){
-  let date = new Date(year,4,1);
-  let count = 0;
-  while(true){
-    if(date.getDay()===0){
-      count++;
-      if(count===2) return date;
-    }
-    date.setDate(date.getDate()+1);
-  }
+function loadCategories(){
+  onSnapshot(collection(db,"categories"), snap=>{
+    state.categories = snap.docs.map(d=>({id:d.id,...d.data()}));
+    renderCategoryUI();
+  });
 }
 
-function getFatherDay(year){
-  let date = new Date(year,5,1);
-  let count = 0;
-  while(true){
-    if(date.getDay()===0){
-      count++;
-      if(count===3) return date;
-    }
-    date.setDate(date.getDate()+1);
-  }
+window.addCategory = async function(){
+  const val=document.getElementById("newCategory").value.trim();
+  if(!val) return;
+
+  await addDoc(collection(db,"categories"),{
+    name:val,
+    created:serverTimestamp()
+  });
+
+  document.getElementById("newCategory").value="";
+};
+
+window.deleteCategory = async function(id){
+  await deleteDoc(doc(db,"categories",id));
+};
+
+window.changeCategory=function(cat){
+  currentCategory=cat;
+  renderTasks();
+};
+
+function renderCategoryUI(){
+  const btn=document.getElementById("categoryButtons");
+  const sel=document.getElementById("categorySelect");
+
+  btn.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
+  sel.innerHTML="";
+
+  state.categories.forEach(cat=>{
+    btn.innerHTML+=`
+      <button onclick="changeCategory('${cat.name}')">${cat.name}</button>
+      <button onclick="deleteCategory('${cat.id}')">❌</button>
+    `;
+    sel.innerHTML+=`<option>${cat.name}</option>`;
+  });
 }
 
-function getHoliday(year,month,day){
-  for(const h of fixedHolidays){
-    if(h.month===month+1 && h.day===day) return h.name;
-  }
-  const m = getMotherDay(year);
-  if(m.getMonth()===month && m.getDate()===day) return "母親節";
-  const f = getFatherDay(year);
-  if(f.getMonth()===month && f.getDate()===day) return "父親節";
-  return null;
-}
+/* ---------- 任務 ---------- */
 
-/* ---------- Data ---------- */
-
-function loadData(){
+function loadTasks(){
   onSnapshot(collection(db,"tasks"), snap=>{
     state.tasks = snap.docs.map(d=>({id:d.id,...d.data()}));
     renderTasks();
     renderCalendar();
   });
 }
-
-/* ---------- 任務 ---------- */
 
 window.addTask = async function(title,dueDate){
   const taskTitle = title || document.getElementById("taskInput").value.trim();
@@ -191,40 +191,6 @@ function renderTasks(){
   });
 }
 
-/* ---------- 分類管理 ---------- */
-
-window.addCategory=function(){
-  const val=document.getElementById("newCategory").value.trim();
-  if(!val) return;
-  state.categories.push(val);
-  document.getElementById("newCategory").value="";
-  renderCategoryUI();
-};
-
-window.deleteCategory=function(cat){
-  state.categories=state.categories.filter(c=>c!==cat);
-  renderCategoryUI();
-};
-
-window.changeCategory=function(cat){
-  currentCategory=cat;
-  renderTasks();
-};
-
-function renderCategoryUI(){
-  const btn=document.getElementById("categoryButtons");
-  const sel=document.getElementById("categorySelect");
-  btn.innerHTML=`<button onclick="changeCategory('全部')">全部</button>`;
-  sel.innerHTML="";
-  state.categories.forEach(cat=>{
-    btn.innerHTML+=`
-      <button onclick="changeCategory('${cat}')">${cat}</button>
-      <button onclick="deleteCategory('${cat}')">❌</button>
-    `;
-    sel.innerHTML+=`<option>${cat}</option>`;
-  });
-}
-
 /* ---------- 月曆 ---------- */
 
 window.changeMonth=function(offset){
@@ -250,7 +216,6 @@ function renderCalendar(){
 
   for(let d=1;d<=days;d++){
     const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const holiday=getHoliday(currentYear,currentMonth,d);
     const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
     const isToday=dateStr===today;
 
@@ -258,7 +223,6 @@ function renderCalendar(){
       <div class="calendar-day ${isToday?"today":""}"
         onclick="openCalendarModal('${dateStr}')">
         ${d}
-        ${holiday?`<div class="holiday-dot"></div>`:""}
         ${hasTask?`<div class="task-dot"></div>`:""}
       </div>
     `;
@@ -272,14 +236,11 @@ window.openCalendarModal=function(date){
   const content=document.getElementById("modalContent");
   content.innerHTML="";
 
-  const [y,m,d]=date.split("-");
-  const holiday=getHoliday(parseInt(y),parseInt(m)-1,parseInt(d));
   const tasks=state.tasks.filter(t=>t.dueDate===date);
 
   content.innerHTML+=`<div><strong>${date}</strong></div>`;
-  if(holiday) content.innerHTML+=`<div style="color:red;margin-top:4px;">${holiday}</div>`;
-
   content.innerHTML+=`<div style="margin-top:10px;">任務：</div>`;
+
   if(tasks.length===0){
     content.innerHTML+=`<div style="color:#777;">當天沒有任務</div>`;
   }else{
@@ -302,13 +263,15 @@ window.closeCalendarModal=function(){
   document.getElementById("calendarModal").style.display="none";
 };
 
-loadData();
-renderCategoryUI();
+/* ---------- 初始化 ---------- */
+
+loadCategories();
+loadTasks();
+
 </script>
 
 <style>
 body{font-family:Arial;background:#f6f7f9;padding:20px;}
-.quote{text-align:center;font-size:24px;margin:40px 0;color:#444;}
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
 .task-row{display:flex;justify-content:space-between;}
 .completed{text-decoration:line-through;color:#aaa;}
@@ -321,7 +284,6 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 .weekday{text-align:center;font-size:12px;color:#666;}
 .calendar-day{position:relative;background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
 .today{background:#2563eb;color:white;}
-.holiday-dot{width:6px;height:6px;background:red;border-radius:50%;position:absolute;top:4px;right:4px;}
 .task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;position:absolute;bottom:4px;left:4px;}
 .modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;justify-content:center;align-items:center;}
 .modal-box{background:white;padding:20px;border-radius:12px;width:280px;}
@@ -329,8 +291,6 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 </head>
 
 <body>
-
-<div class="quote">細節成就卓越</div>
 
 <h3>分類</h3>
 <div id="categoryButtons"></div>
