@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife Online</title>
+<title>FocusLife Stable</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -24,18 +24,18 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
-  authDomain: "focuslife-app-eeba5.firebaseapp.com",
-  projectId: "focuslife-app-eeba5"
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID"
 };
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-/* ========== 分類管理 ========== */
-
 let categories = [];
+let unsubscribeTasks = null;
 
+/* ✅ 載入分類 */
 async function loadCategories() {
   const snapshot = await getDocs(collection(db, "categories"));
   categories = snapshot.docs.map(doc => doc.data().name);
@@ -50,6 +50,7 @@ async function loadCategories() {
   renderCategoryOptions();
 }
 
+/* ✅ 顯示分類下拉 */
 function renderCategoryOptions() {
   const select = document.getElementById("categorySelect");
   select.innerHTML = "";
@@ -58,16 +59,15 @@ function renderCategoryOptions() {
   });
 }
 
+/* ✅ 新增分類 */
 window.addCategory = async function() {
-  const newCat = prompt("輸入新分類名稱");
-  if (!newCat) return;
-
-  await addDoc(collection(db, "categories"), { name: newCat });
-  loadCategories();
+  const name = prompt("輸入新分類名稱");
+  if (!name) return;
+  await addDoc(collection(db, "categories"), { name });
+  await loadCategories();
 };
 
-/* ========== 任務管理 ========== */
-
+/* ✅ 新增任務 */
 window.addTask = async function() {
   const title = document.getElementById("taskInput").value.trim();
   const category = document.getElementById("categorySelect").value;
@@ -78,35 +78,36 @@ window.addTask = async function() {
     category,
     completed: false,
     pinned: false,
-    order: Date.now(),
     created: serverTimestamp()
   });
 
   document.getElementById("taskInput").value = "";
 };
 
+/* ✅ 切換完成 */
 window.toggleTask = async function(id, current) {
   await updateDoc(doc(db, "tasks", id), {
     completed: !current
   });
 };
 
+/* ✅ 刪除 */
 window.deleteTask = async function(id) {
   await deleteDoc(doc(db, "tasks", id));
 };
 
+/* ✅ 置頂 */
 window.togglePin = async function(id, current) {
   await updateDoc(doc(db, "tasks", id), {
     pinned: !current
   });
 };
 
-/* ========== 讀取任務 ========== */
-
+/* ✅ 載入任務（穩定版） */
 function loadTasks() {
-  const q = query(collection(db, "tasks"), orderBy("pinned", "desc"), orderBy("order"));
+  const q = query(collection(db, "tasks"), orderBy("created"));
 
-  onSnapshot(q, (snapshot) => {
+  unsubscribeTasks = onSnapshot(q, (snapshot) => {
     const container = document.getElementById("taskContainer");
     container.innerHTML = "";
 
@@ -115,8 +116,15 @@ function loadTasks() {
 
     snapshot.forEach(docItem => {
       const data = docItem.data();
-      if (!grouped[data.category]) grouped[data.category] = [];
-      grouped[data.category].push({ id: docItem.id, ...data });
+
+      if (!grouped[data.category]) {
+        grouped[data.category] = [];
+      }
+
+      grouped[data.category].push({
+        id: docItem.id,
+        ...data
+      });
     });
 
     for (let cat of categories) {
@@ -125,45 +133,33 @@ function loadTasks() {
       const section = document.createElement("div");
       section.innerHTML = `<h3>📂 ${cat}</h3>`;
       const ul = document.createElement("ul");
-      ul.id = "list-" + cat;
 
-      grouped[cat].forEach(task => {
-        const li = document.createElement("li");
-        li.dataset.id = task.id;
-        li.innerHTML = `
-          <input type="checkbox" ${task.completed ? "checked" : ""}
-            onchange="toggleTask('${task.id}', ${task.completed})">
-          <span style="text-decoration:${task.completed ? "line-through" : "none"}">
-            ${task.title}
-          </span>
-          <button onclick="togglePin('${task.id}', ${task.pinned})">
-            ${task.pinned ? "📌" : "📍"}
-          </button>
-          <button onclick="deleteTask('${task.id}')">❌</button>
-        `;
-        ul.appendChild(li);
-      });
+      /* ✅ 前端排序：pinned 在前 */
+      grouped[cat]
+        .sort((a, b) => (b.pinned === true) - (a.pinned === true))
+        .forEach(task => {
+          const li = document.createElement("li");
+          li.innerHTML = `
+            <input type="checkbox" ${task.completed ? "checked" : ""}
+              onchange="toggleTask('${task.id}', ${task.completed})">
+            <span style="text-decoration:${task.completed ? "line-through" : "none"}">
+              ${task.title}
+            </span>
+            <button onclick="togglePin('${task.id}', ${task.pinned})">
+              ${task.pinned ? "📌" : "📍"}
+            </button>
+            <button onclick="deleteTask('${task.id}')">❌</button>
+          `;
+          ul.appendChild(li);
+        });
 
       section.appendChild(ul);
       container.appendChild(section);
-
-      new Sortable(ul, {
-        animation: 150,
-        onEnd: async function () {
-          const items = ul.children;
-          for (let i = 0; i < items.length; i++) {
-            const id = items[i].dataset.id;
-            await updateDoc(doc(db, "tasks", id), {
-              order: i
-            });
-          }
-        }
-      });
     }
   });
 }
 
-/* 初始化 */
+/* ✅ 初始化 */
 async function init() {
   await loadCategories();
   loadTasks();
@@ -177,14 +173,14 @@ init();
 body { font-family: Arial; padding: 20px; background: #f4f6f9; }
 input, select, button { padding: 8px; margin: 5px 0; }
 button { background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
-li { margin: 6px 0; cursor: grab; }
+li { margin: 6px 0; }
 h3 { margin-top: 20px; }
 </style>
 </head>
 
 <body>
 
-<h2>🌿 FocusLife Online</h2>
+<h2>🌿 FocusLife Stable</h2>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="輸入任務">
