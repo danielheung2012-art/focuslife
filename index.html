@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v9.2</title>
+<title>FocusLife v9.3</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -22,7 +22,8 @@ import {
   deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
-/* ✅ Firebase 設定 */
+/* ---------------- Firebase ---------------- */
+
 const firebaseConfig = {
   apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
   authDomain: "focuslife-app-eeba5.firebaseapp.com",
@@ -35,153 +36,164 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-/* ✅ 新增任務 */
-window.addTask = async function(){
-  const title=document.getElementById("taskInput").value.trim();
-  const category=document.getElementById("categorySelect").value;
-  const priority=document.getElementById("prioritySelect").value;
-  const dueDate=document.getElementById("dueDateInput").value || null;
+/* ---------------- 新增任務 ---------------- */
 
-  if(!title) return;
+window.addTask = async function () {
+  const title = document.getElementById("taskInput").value.trim();
+  const category = document.getElementById("categorySelect").value;
+  const priority = document.getElementById("prioritySelect").value;
+  const dueDate = document.getElementById("dueDateInput").value || null;
 
-  await addDoc(collection(db,"tasks"),{
+  if (!title) return;
+
+  await addDoc(collection(db, "tasks"), {
     title,
     category,
     priority,
     dueDate,
-    completed:false,
-    pinned:false,
-    order:Date.now(),
-    created:serverTimestamp()
+    completed: false,
+    pinned: false,
+    order: Date.now(),
+    created: serverTimestamp()
   });
 
-  document.getElementById("taskInput").value="";
+  document.getElementById("taskInput").value = "";
 };
 
-/* ✅ 操作 */
-window.toggleTask=async(id,current)=>{
-  await updateDoc(doc(db,"tasks",id),{completed:!current});
-};
+/* ---------------- 操作 ---------------- */
 
-window.deleteTask=async(id)=>{
-  await deleteDoc(doc(db,"tasks",id));
-};
+window.toggleTask = async (id, current) =>
+  await updateDoc(doc(db, "tasks", id), { completed: !current });
 
-window.togglePin=async(id,current)=>{
-  await updateDoc(doc(db,"tasks",id),{pinned:!current});
-};
+window.deleteTask = async (id) =>
+  await deleteDoc(doc(db, "tasks", id));
 
-/* ✅ 載入任務 */
-function loadTasks(){
-  const q=query(collection(db,"tasks"),orderBy("order"));
+window.togglePin = async (id, current) =>
+  await updateDoc(doc(db, "tasks", id), { pinned: !current });
 
-  onSnapshot(q,(snapshot)=>{
-    const container=document.getElementById("taskContainer");
-    container.innerHTML="";
+/* ---------------- 核心渲染 ---------------- */
 
-    const grouped={};
+function loadTasks() {
+  const q = query(collection(db, "tasks"), orderBy("order"));
 
-    snapshot.forEach(docItem=>{
-      const data=docItem.data();
-      const category=data.category || "未分類";
+  onSnapshot(q, (snapshot) => {
+    const tasks = [];
+    snapshot.forEach(docItem =>
+      tasks.push({ id: docItem.id, ...docItem.data() })
+    );
 
-      if(!grouped[category]){
-        grouped[category]={todo:[],done:[]};
-      }
-
-      const task={id:docItem.id,...data};
-
-      if(task.completed){
-        grouped[category].done.push(task);
-      }else{
-        grouped[category].todo.push(task);
-      }
-    });
-
-    Object.keys(grouped).forEach(cat=>{
-      const section=document.createElement("div");
-      section.className="category-card";
-      section.innerHTML=`<h3>📂 ${cat}</h3>`;
-
-      /* ✅ 未完成 */
-      const todoList=document.createElement("ul");
-      todoList.className="task-list";
-
-      const pinned=grouped[cat].todo.filter(t=>t.pinned);
-      const normal=grouped[cat].todo.filter(t=>!t.pinned);
-
-      [...pinned,...normal].forEach(task=>{
-        todoList.appendChild(createTaskElement(task));
-      });
-
-      new Sortable(todoList,{
-        animation:150,
-        onEnd:async function(){
-          const items=todoList.children;
-          for(let i=0;i<items.length;i++){
-            const id=items[i].dataset.id;
-            await updateDoc(doc(db,"tasks",id),{order:i});
-          }
-        }
-      });
-
-      section.appendChild(todoList);
-
-      /* ✅ 已完成 */
-      if(grouped[cat].done.length>0){
-        const doneTitle=document.createElement("div");
-        doneTitle.className="done-title";
-        doneTitle.innerText="✅ 已完成（點擊展開）";
-
-        const doneList=document.createElement("ul");
-        doneList.className="task-list";
-        doneList.style.display="none";
-
-        doneTitle.onclick=()=>{
-          doneList.style.display=
-            doneList.style.display==="none"?"block":"none";
-        };
-
-        grouped[cat].done.forEach(task=>{
-          doneList.appendChild(createTaskElement(task));
-        });
-
-        section.appendChild(doneTitle);
-        section.appendChild(doneList);
-      }
-
-      container.appendChild(section);
-    });
+    renderUI(tasks);
   });
 }
 
-/* ✅ 任務卡片 */
-function createTaskElement(task){
-  const li=document.createElement("li");
-  li.className="task-card";
-  li.dataset.id=task.id;
+function renderUI(tasks) {
+  const container = document.getElementById("taskContainer");
+  container.innerHTML = "";
 
-  let dueText="";
-  if(task.dueDate){
-    const today=new Date().toISOString().split("T")[0];
-    if(task.dueDate<today) dueText=`<span class="due overdue">📅 ${task.dueDate}</span>`;
-    else if(task.dueDate===today) dueText=`<span class="due today">📅 ${task.dueDate}</span>`;
-    else dueText=`<span class="due future">📅 ${task.dueDate}</span>`;
+  const grouped = {};
+
+  tasks.forEach(task => {
+    const cat = task.category || "未分類";
+    if (!grouped[cat]) grouped[cat] = { pinned: [], todo: [], done: [] };
+
+    if (task.completed) grouped[cat].done.push(task);
+    else if (task.pinned) grouped[cat].pinned.push(task);
+    else grouped[cat].todo.push(task);
+  });
+
+  Object.keys(grouped).forEach(cat => {
+    const section = document.createElement("div");
+    section.className = "category-card";
+    section.innerHTML = `<h2>${cat}</h2>`;
+
+    const pinnedList = createTaskList(grouped[cat].pinned, true);
+    const todoList = createTaskList(grouped[cat].todo, true);
+    const doneList = createTaskList(grouped[cat].done, false);
+
+    if (grouped[cat].pinned.length > 0) {
+      section.innerHTML += `<h4>📌 置頂</h4>`;
+      section.appendChild(pinnedList);
+    }
+
+    if (grouped[cat].todo.length > 0) {
+      section.innerHTML += `<h4>📝 未完成</h4>`;
+      section.appendChild(todoList);
+    }
+
+    if (grouped[cat].done.length > 0) {
+      const doneTitle = document.createElement("h4");
+      doneTitle.textContent = "✅ 已完成（點擊收合）";
+      const wrapper = document.createElement("div");
+      wrapper.style.display = "none";
+      wrapper.appendChild(doneList);
+
+      doneTitle.onclick = () =>
+        wrapper.style.display =
+          wrapper.style.display === "none" ? "block" : "none";
+
+      section.appendChild(doneTitle);
+      section.appendChild(wrapper);
+    }
+
+    container.appendChild(section);
+  });
+}
+
+function createTaskList(taskArray, draggable) {
+  const ul = document.createElement("ul");
+  ul.className = "task-list";
+
+  taskArray.forEach(task => {
+    ul.appendChild(createTaskCard(task));
+  });
+
+  if (draggable) {
+    new Sortable(ul, {
+      animation: 150,
+      onEnd: async function () {
+        const items = ul.children;
+        for (let i = 0; i < items.length; i++) {
+          const id = items[i].dataset.id;
+          await updateDoc(doc(db, "tasks", id), { order: i });
+        }
+      }
+    });
   }
 
-  li.innerHTML=`
-    <div class="task-main">
-      <input type="checkbox" ${task.completed?"checked":""}
+  return ul;
+}
+
+function createTaskCard(task) {
+  const li = document.createElement("li");
+  li.className = "task-card";
+  li.dataset.id = task.id;
+
+  let dueHTML = "";
+  if (task.dueDate) {
+    const today = new Date().toISOString().split("T")[0];
+    let cls = "future";
+    if (task.dueDate < today) cls = "overdue";
+    else if (task.dueDate === today) cls = "today";
+    dueHTML = `<span class="due ${cls}">📅 ${task.dueDate}</span>`;
+  }
+
+  li.innerHTML = `
+    <div class="task-left">
+      <input type="checkbox" ${task.completed ? "checked" : ""}
         onchange="toggleTask('${task.id}',${task.completed})">
-      <span class="${task.completed?"completed":""}">
-        ${task.title}
-      </span>
-      <span class="priority">${task.priority || ""}</span>
-      ${dueText}
+      <div>
+        <div class="${task.completed ? "completed" : ""}">
+          ${task.title}
+        </div>
+        <div class="meta">
+          <span class="priority ${task.priority}">${task.priority || ""}</span>
+          ${dueHTML}
+        </div>
+      </div>
     </div>
     <div>
       <button onclick="togglePin('${task.id}',${task.pinned})">
-        ${task.pinned?"📌":"📍"}
+        ${task.pinned ? "📌" : "📍"}
       </button>
       <button onclick="deleteTask('${task.id}')">❌</button>
     </div>
@@ -196,87 +208,92 @@ loadTasks();
 <style>
 body{
   font-family:Arial;
-  background:#f3f4f6;
-  padding:20px;
+  background:#f4f6f9;
+  padding:25px;
 }
+
+h2{margin:0 0 10px 0;}
 
 .category-card{
   background:white;
-  padding:15px;
-  border-radius:12px;
-  margin-bottom:20px;
-  box-shadow:0 4px 12px rgba(0,0,0,0.05);
+  padding:20px;
+  border-radius:16px;
+  margin-bottom:25px;
+  box-shadow:0 8px 20px rgba(0,0,0,0.05);
 }
 
 .task-list{
   list-style:none;
   padding:0;
+  margin:10px 0;
 }
 
 .task-card{
   display:flex;
   justify-content:space-between;
   align-items:center;
-  background:#f9fafb;
+  background:#fafafa;
   margin:8px 0;
-  padding:10px;
-  border-radius:8px;
+  padding:12px;
+  border-radius:10px;
   cursor:grab;
 }
 
-.task-main{
+.task-left{
   display:flex;
-  align-items:center;
-  gap:8px;
+  gap:10px;
+  align-items:flex-start;
 }
+
+.meta{
+  font-size:12px;
+  margin-top:4px;
+}
+
+.priority.高{color:#dc2626;}
+.priority.中{color:#f59e0b;}
+.priority.低{color:#16a34a;}
 
 .completed{
   text-decoration:line-through;
   color:#999;
 }
 
-.priority{
-  font-size:12px;
-  padding:2px 6px;
-  border-radius:4px;
-  background:#e5e7eb;
-}
+.due.overdue{color:#dc2626;}
+.due.today{color:#f59e0b;}
+.due.future{color:#16a34a;}
 
-.due.overdue{color:red;}
-.due.today{color:orange;}
-.due.future{color:green;}
-
-.done-title{
-  margin-top:10px;
-  font-size:14px;
+button{
+  border:none;
+  background:none;
   cursor:pointer;
-  color:#555;
+  font-size:16px;
 }
 </style>
 </head>
 
 <body>
 
-<h2>🌿 FocusLife v9.2</h2>
+<h1>🌿 FocusLife v9.3</h1>
 
-<h3>新增任務</h3>
-<input id="taskInput" placeholder="輸入任務">
-<select id="categorySelect">
-  <option>工作</option>
-  <option>學習</option>
-  <option>運動</option>
-  <option>生活</option>
-  <option>嗜好小組</option>
-</select>
-<select id="prioritySelect">
-  <option value="高">🔴 高</option>
-  <option value="中">🟡 中</option>
-  <option value="低">🟢 低</option>
-</select>
-<input type="date" id="dueDateInput">
-<button onclick="addTask()">新增</button>
+<div style="margin-bottom:20px;">
+  <input id="taskInput" placeholder="輸入任務">
+  <select id="categorySelect">
+    <option>工作</option>
+    <option>學習</option>
+    <option>運動</option>
+    <option>生活</option>
+    <option>嗜好小組</option>
+  </select>
+  <select id="prioritySelect">
+    <option value="高">高</option>
+    <option value="中">中</option>
+    <option value="低">低</option>
+  </select>
+  <input type="date" id="dueDateInput">
+  <button onclick="addTask()">新增</button>
+</div>
 
-<hr>
 <div id="taskContainer"></div>
 
 </body>
