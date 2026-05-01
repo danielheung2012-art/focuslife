@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife Stable</title>
+<title>FocusLife v9</title>
+
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
@@ -21,7 +23,6 @@ import {
   getDocs
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
-/* ✅ 你的 Firebase 設定 */
 const firebaseConfig = {
   apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
   authDomain: "focuslife-app-eeba5.firebaseapp.com",
@@ -35,169 +36,244 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 let categories = [];
+let focusMode = false;
 
-/* ✅ 載入分類 */
+/* ------------------ 分類 ------------------ */
+
 async function loadCategories() {
-  try {
-    const snapshot = await getDocs(collection(db, "categories"));
-    categories = snapshot.docs.map(doc => doc.data().name);
+  const snapshot = await getDocs(collection(db, "categories"));
+  categories = snapshot.docs.map(doc => doc.data().name);
 
-    /* 如果沒有分類，自動建立 */
-    if (categories.length === 0) {
-      categories = ["工作", "學習", "運動", "生活", "嗜好小組"];
-      for (let cat of categories) {
-        await addDoc(collection(db, "categories"), { name: cat });
-      }
+  if (categories.length === 0) {
+    categories = ["工作","學習","運動","生活","嗜好小組"];
+    for (let cat of categories) {
+      await addDoc(collection(db,"categories"),{name:cat});
     }
-
-    renderCategoryOptions();
-  } catch (error) {
-    console.error("分類載入錯誤:", error);
   }
+  renderCategoryOptions();
 }
 
-/* ✅ 顯示分類下拉 */
-function renderCategoryOptions() {
+function renderCategoryOptions(){
   const select = document.getElementById("categorySelect");
-  select.innerHTML = "";
-  categories.forEach(cat => {
-    const option = document.createElement("option");
-    option.value = cat;
-    option.textContent = cat;
+  select.innerHTML="";
+  categories.forEach(cat=>{
+    const option=document.createElement("option");
+    option.value=cat;
+    option.textContent=cat;
     select.appendChild(option);
   });
 }
 
-/* ✅ 新增分類 */
-window.addCategory = async function() {
-  const name = prompt("輸入新分類名稱");
-  if (!name) return;
+/* ------------------ 新增任務 ------------------ */
 
-  await addDoc(collection(db, "categories"), { name });
-  await loadCategories();
-};
+window.addTask = async function(){
+  const title=document.getElementById("taskInput").value.trim();
+  const category=document.getElementById("categorySelect").value;
+  const priority=document.getElementById("prioritySelect").value;
+  const dueDate=document.getElementById("dueDateInput").value || null;
 
-/* ✅ 新增任務 */
-window.addTask = async function() {
-  const title = document.getElementById("taskInput").value.trim();
-  const category = document.getElementById("categorySelect").value;
+  if(!title) return;
 
-  if (!title) return;
-
-  await addDoc(collection(db, "tasks"), {
+  await addDoc(collection(db,"tasks"),{
     title,
     category,
-    completed: false,
-    pinned: false,
-    created: serverTimestamp()
+    priority,
+    dueDate,
+    completed:false,
+    pinned:false,
+    order:Date.now(),
+    created:serverTimestamp()
   });
 
-  document.getElementById("taskInput").value = "";
+  document.getElementById("taskInput").value="";
 };
 
-/* ✅ 切換完成 */
-window.toggleTask = async function(id, current) {
-  await updateDoc(doc(db, "tasks", id), {
-    completed: !current
-  });
+/* Enter 快速新增 */
+document.addEventListener("keydown",e=>{
+  if(e.key==="Enter" && document.activeElement.id==="taskInput"){
+    addTask();
+  }
+});
+
+/* ------------------ 任務操作 ------------------ */
+
+window.toggleTask=async(id,current)=>{
+  await updateDoc(doc(db,"tasks",id),{completed:!current});
 };
 
-/* ✅ 刪除 */
-window.deleteTask = async function(id) {
-  await deleteDoc(doc(db, "tasks", id));
+window.deleteTask=async(id)=>{
+  await deleteDoc(doc(db,"tasks",id));
 };
 
-/* ✅ 置頂 */
-window.togglePin = async function(id, current) {
-  await updateDoc(doc(db, "tasks", id), {
-    pinned: !current
-  });
+window.togglePin=async(id,current)=>{
+  await updateDoc(doc(db,"tasks",id),{pinned:!current});
 };
 
-/* ✅ 載入任務（穩定版） */
-function loadTasks() {
-  const q = query(collection(db, "tasks"), orderBy("created"));
+/* ------------------ 今日專注模式 ------------------ */
 
-  onSnapshot(q, (snapshot) => {
-    const container = document.getElementById("taskContainer");
-    container.innerHTML = "";
+window.toggleFocusMode=function(){
+  focusMode=!focusMode;
+  document.getElementById("focusBtn").innerText=
+    focusMode?"🔙 返回全部":"🎯 今日專注";
+};
 
-    const grouped = {};
-    categories.forEach(cat => grouped[cat] = []);
+/* ------------------ 渲染任務 ------------------ */
 
-    snapshot.forEach(docItem => {
-      const data = docItem.data();
-      if (!grouped[data.category]) grouped[data.category] = [];
-      grouped[data.category].push({
-        id: docItem.id,
-        ...data
-      });
+function loadTasks(){
+  const q=query(collection(db,"tasks"),orderBy("created"));
+
+  onSnapshot(q,(snapshot)=>{
+    const container=document.getElementById("taskContainer");
+    container.innerHTML="";
+    const grouped={};
+    categories.forEach(cat=>grouped[cat]={todo:[],done:[]});
+
+    snapshot.forEach(docItem=>{
+      const data=docItem.data();
+      if(!grouped[data.category]) return;
+
+      const task={id:docItem.id,...data};
+
+      if(focusMode){
+        const today=new Date().toISOString().split("T")[0];
+        if(!(task.pinned || task.priority==="高" || task.dueDate===today)){
+          return;
+        }
+      }
+
+      if(task.completed){
+        grouped[data.category].done.push(task);
+      }else{
+        grouped[data.category].todo.push(task);
+      }
     });
 
-    for (let cat of categories) {
-      if (!grouped[cat] || grouped[cat].length === 0) continue;
+    for(let cat of categories){
+      const section=document.createElement("div");
+      section.innerHTML=`<h3>📂 ${cat}</h3>`;
 
-      const section = document.createElement("div");
-      section.innerHTML = `<h3>📂 ${cat}</h3>`;
-      const ul = document.createElement("ul");
-
-      /* ✅ 前端排序：置頂優先 */
-      grouped[cat]
-        .sort((a, b) => (b.pinned === true) - (a.pinned === true))
-        .forEach(task => {
-          const li = document.createElement("li");
-          li.innerHTML = `
-            <input type="checkbox" ${task.completed ? "checked" : ""}
-              onchange="toggleTask('${task.id}', ${task.completed})">
-            <span style="text-decoration:${task.completed ? "line-through" : "none"}">
-              ${task.title}
-            </span>
-            <button onclick="togglePin('${task.id}', ${task.pinned})">
-              ${task.pinned ? "📌" : "📍"}
-            </button>
-            <button onclick="deleteTask('${task.id}')">❌</button>
-          `;
-          ul.appendChild(li);
+      /* 未完成 */
+      const todoList=document.createElement("ul");
+      grouped[cat].todo
+        .sort((a,b)=>{
+          if(a.pinned!==b.pinned) return b.pinned-a.pinned;
+          if(a.priority!==b.priority){
+            const p={"高":3,"中":2,"低":1};
+            return p[b.priority]-p[a.priority];
+          }
+          if(a.dueDate && b.dueDate){
+            return new Date(a.dueDate)-new Date(b.dueDate);
+          }
+          return a.order-b.order;
+        })
+        .forEach(task=>{
+          todoList.appendChild(createTaskElement(task,false));
         });
 
-      section.appendChild(ul);
+      /* 拖動排序 */
+      new Sortable(todoList,{
+        animation:150,
+        onEnd:async function(){
+          const items=todoList.children;
+          for(let i=0;i<items.length;i++){
+            const id=items[i].dataset.id;
+            await updateDoc(doc(db,"tasks",id),{order:i});
+          }
+        }
+      });
+
+      section.appendChild(todoList);
+
+      /* 已完成區 */
+      if(grouped[cat].done.length>0){
+        const doneTitle=document.createElement("h4");
+        doneTitle.innerText="✅ 已完成（點擊收合）";
+        const doneList=document.createElement("ul");
+        doneList.style.display="none";
+
+        doneTitle.onclick=()=>{
+          doneList.style.display=
+            doneList.style.display==="none"?"block":"none";
+        };
+
+        grouped[cat].done.forEach(task=>{
+          doneList.appendChild(createTaskElement(task,true));
+        });
+
+        section.appendChild(doneTitle);
+        section.appendChild(doneList);
+      }
+
       container.appendChild(section);
     }
   });
 }
 
-/* ✅ 初始化 */
-async function init() {
+/* 建立任務元素 */
+function createTaskElement(task,isDone){
+  const li=document.createElement("li");
+  li.dataset.id=task.id;
+
+  let dueText="";
+  if(task.dueDate){
+    const today=new Date().toISOString().split("T")[0];
+    if(task.dueDate<today) dueText=`<span style="color:red">📅 ${task.dueDate}</span>`;
+    else if(task.dueDate===today) dueText=`<span style="color:orange">📅 ${task.dueDate}</span>`;
+    else dueText=`<span style="color:green">📅 ${task.dueDate}</span>`;
+  }
+
+  li.innerHTML=`
+    <input type="checkbox" ${task.completed?"checked":""}
+      onchange="toggleTask('${task.id}',${task.completed})">
+    <span style="text-decoration:${task.completed?"line-through":"none"}">
+      ${task.title} (${task.priority})
+    </span>
+    ${dueText}
+    <button onclick="togglePin('${task.id}',${task.pinned})">
+      ${task.pinned?"📌":"📍"}
+    </button>
+    <button onclick="deleteTask('${task.id}')">❌</button>
+  `;
+
+  return li;
+}
+
+/* 初始化 */
+async function init(){
   await loadCategories();
   loadTasks();
 }
-
 init();
 
 </script>
 
 <style>
-body { font-family: Arial; padding: 20px; background: #f4f6f9; }
-input, select, button { padding: 8px; margin: 5px 0; }
-button { background: #2563eb; color: white; border: none; border-radius: 4px; cursor: pointer; }
-li { margin: 6px 0; }
-h3 { margin-top: 20px; }
+body{font-family:Arial;padding:20px;background:#f4f6f9;}
+input,select,button{padding:6px;margin:5px;}
+button{background:#2563eb;color:white;border:none;border-radius:4px;}
+li{margin:8px 0;}
+h3{margin-top:25px;}
 </style>
 </head>
 
 <body>
 
-<h2>🌿 FocusLife</h2>
+<h2>🌿 FocusLife v9</h2>
+
+<button id="focusBtn" onclick="toggleFocusMode()">🎯 今日專注</button>
 
 <h3>新增任務</h3>
 <input id="taskInput" placeholder="輸入任務">
 <select id="categorySelect"></select>
+<select id="prioritySelect">
+  <option value="高">🔴 高</option>
+  <option value="中">🟡 中</option>
+  <option value="低">🟢 低</option>
+</select>
+<input type="date" id="dueDateInput">
 <button onclick="addTask()">新增任務</button>
-<button onclick="addCategory()">➕ 新增分類</button>
 
 <hr>
-
-<h2>📋 任務清單</h2>
 <div id="taskContainer"></div>
 
 </body>
