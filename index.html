@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v18.1</title>
+<title>FocusLife v18.2</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -16,9 +16,12 @@ import {
   onSnapshot,
   doc,
   updateDoc,
-  deleteDoc,
-  serverTimestamp
+  deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+/* =============================
+   Firebase Config
+============================= */
 
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
@@ -29,14 +32,20 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-const state = { tasks: [], inbox: [] };
-let currentCategory = "全部";
+/* =============================
+   Global State
+============================= */
+
+const state = {
+  tasks: [],
+  inbox: []
+};
 
 const PRIORITY_WEIGHT = { 高:3, 中:2, 低:1 };
 const STAGNANT_DAYS = 3;
 
 /* =============================
-   Load Tasks
+   Load Data
 ============================= */
 
 function loadTasks(){
@@ -49,8 +58,18 @@ function loadTasks(){
   });
 }
 
+function loadInbox(){
+  onSnapshot(collection(db,"inbox"), snap=>{
+    state.inbox = snap.docs.map(d=>({
+      id:d.id,
+      ...d.data()
+    }));
+    renderAll();
+  });
+}
+
 /* =============================
-   Add Task
+   Task Operations
 ============================= */
 
 window.addTask = async function(){
@@ -73,20 +92,12 @@ window.addTask = async function(){
   document.getElementById("taskInput").value="";
 };
 
-/* =============================
-   Toggle Complete
-============================= */
-
 window.toggleTask = async function(task){
   await updateDoc(doc(db,"tasks",task.id),{
     completed:!task.completed,
     updatedAt:Date.now()
   });
 };
-
-/* =============================
-   Toggle Manual Focus ⭐
-============================= */
 
 window.toggleFocusManual = async function(task){
 
@@ -105,15 +116,47 @@ window.toggleFocusManual = async function(task){
   });
 };
 
-/* =============================
-   Update Next Step
-============================= */
-
 window.updateNextStep = async function(id,value){
   await updateDoc(doc(db,"tasks",id),{
     nextStep:value,
     updatedAt:Date.now()
   });
+};
+
+/* =============================
+   InBox Operations
+============================= */
+
+window.addInbox = async function(){
+  const content = document.getElementById("inboxInput").value.trim();
+  if(!content) return;
+
+  await addDoc(collection(db,"inbox"),{
+    content,
+    createdAt:Date.now()
+  });
+
+  document.getElementById("inboxInput").value="";
+};
+
+window.convertInbox = async function(item){
+
+  await addDoc(collection(db,"tasks"),{
+    title:item.content,
+    category:"未分類",
+    priority:"中",
+    completed:false,
+    nextStep:"",
+    isFocusManual:false,
+    createdAt:Date.now(),
+    updatedAt:null
+  });
+
+  await deleteDoc(doc(db,"inbox",item.id));
+};
+
+window.deleteInbox = async function(id){
+  await deleteDoc(doc(db,"inbox",id));
 };
 
 /* =============================
@@ -134,7 +177,7 @@ function getFocusTasks(){
       if(PRIORITY_WEIGHT[a.priority] !== PRIORITY_WEIGHT[b.priority]){
         return PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority];
       }
-      return (a.createdAt||0) - (b.createdAt||0);
+      return (a.createdAt||0)-(b.createdAt||0);
     });
 
   return [
@@ -144,7 +187,7 @@ function getFocusTasks(){
 }
 
 /* =============================
-   Render Focus
+   Render
 ============================= */
 
 function renderFocus(){
@@ -160,19 +203,36 @@ function renderFocus(){
 
   focusTasks.forEach(task=>{
     container.innerHTML+=`
-      <div class="focus-card">
-        ⭐ ${task.title}
-      </div>
+      <div class="focus-card">⭐ ${task.title}</div>
     `;
   });
 }
 
-/* =============================
-   Render Tasks
-============================= */
+function renderInbox(){
+  const container = document.getElementById("inboxContainer");
+  container.innerHTML="";
+
+  if(state.inbox.length===0){
+    container.innerHTML="<div class='inbox-empty'>目前沒有靈感</div>";
+    return;
+  }
+
+  state.inbox
+    .sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))
+    .forEach(item=>{
+      container.innerHTML+=`
+        <div class="inbox-card">
+          <span>${item.content}</span>
+          <div>
+            <button onclick='convertInbox(${JSON.stringify(item)})'>✅</button>
+            <button onclick='deleteInbox("${item.id}")'>🗑</button>
+          </div>
+        </div>
+      `;
+    });
+}
 
 function renderTasks(){
-
   const container=document.getElementById("tasksContainer");
   container.innerHTML="";
 
@@ -214,12 +274,9 @@ function renderTasks(){
     });
 }
 
-/* =============================
-   Render All
-============================= */
-
 function renderAll(){
   renderFocus();
+  renderInbox();
   renderTasks();
 }
 
@@ -228,6 +285,7 @@ function renderAll(){
 ============================= */
 
 loadTasks();
+loadInbox();
 
 </script>
 
@@ -257,6 +315,28 @@ body{
   padding:8px;
   border-radius:8px;
   margin:5px 0;
+}
+
+.inbox-section{
+  background:#f3f4f6;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:15px;
+}
+
+.inbox-card{
+  background:white;
+  padding:8px;
+  margin:6px 0;
+  border-radius:8px;
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+}
+
+.inbox-empty{
+  color:#888;
+  font-size:12px;
 }
 
 .task-card{
@@ -292,6 +372,14 @@ body{
 <div class="focus-section">
   <h4>今日焦點</h4>
   <div id="focusContainer"></div>
+</div>
+
+<div class="inbox-section">
+  <h4>InBox（快速捕捉）</h4>
+  <input id="inboxInput"
+    placeholder="快速記錄靈感..."
+    onkeypress="if(event.key==='Enter') addInbox()">
+  <div id="inboxContainer"></div>
 </div>
 
 <div>
