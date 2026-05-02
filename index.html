@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.8</title>
+<title>FocusLife v17.9</title>
 
 <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
@@ -56,13 +56,19 @@ function renderCategorySelects(){
   const main=document.getElementById("categorySelect");
   const modal=document.getElementById("modalCategory");
 
-  main.innerHTML=`<option>未分類</option>`;
-  modal.innerHTML=`<option>未分類</option>`;
+  if(main){
+    main.innerHTML=`<option>未分類</option>`;
+    state.categories.forEach(cat=>{
+      main.innerHTML+=`<option>${cat.name}</option>`;
+    });
+  }
 
-  state.categories.forEach(cat=>{
-    main.innerHTML+=`<option>${cat.name}</option>`;
-    modal.innerHTML+=`<option>${cat.name}</option>`;
-  });
+  if(modal){
+    modal.innerHTML=`<option>未分類</option>`;
+    state.categories.forEach(cat=>{
+      modal.innerHTML+=`<option>${cat.name}</option>`;
+    });
+  }
 }
 
 window.addCategory=async function(){
@@ -217,7 +223,7 @@ function renderTasks(){
 
   filtered.forEach(task=>{
     container.innerHTML+=`
-      <div class="task-card ${task.completed?"completed":""}">
+      <div class="task-card ${task.completed?"completed":""}" data-id="${task.id}">
         <div class="task-row">
           <div>
             <input type="checkbox" ${task.completed?"checked":""}
@@ -226,7 +232,7 @@ function renderTasks(){
             ${task.priority?`<span class="priority ${priorityClass(task.priority)}">${task.priority}</span>`:""}
           </div>
           <div>
-            <button class="icon-btn" onclick="deleteTask('${task.id}')">✕</button>
+            <button onclick="deleteTask('${task.id}')">✕</button>
           </div>
         </div>
       </div>
@@ -283,7 +289,6 @@ function renderCalendar(){
 window.openCalendarModal=function(date){
   const modal=document.getElementById("calendarModal");
   const content=document.getElementById("modalContent");
-
   const tasks=state.tasks.filter(t=>t.dueDate===date);
 
   content.innerHTML=`
@@ -325,35 +330,19 @@ body{font-family:Arial;background:#f6f7f9;padding:20px;}
 .cat-item{padding:6px 14px;background:#e5e7eb;border-radius:20px;display:flex;gap:6px;}
 .cat-item.active{background:#2563eb;color:white;}
 .delete-btn{font-size:12px;color:#dc2626;}
-
 .task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
 .task-row{display:flex;justify-content:space-between;}
 .completed{text-decoration:line-through;color:#aaa;}
-
 .priority{padding:2px 8px;border-radius:12px;font-size:12px;margin-left:8px;}
 .p-high{background:#fee2e2;color:#b91c1c;}
 .p-mid{background:#ffedd5;color:#c2410c;}
 .p-low{background:#e5e7eb;color:#374151;}
-
 .calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
 .weekday{text-align:center;font-size:12px;color:#666;}
 .calendar-day{background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
 .task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;margin:4px auto 0;}
-
-.modal{
-  position:fixed;
-  top:0;left:0;right:0;bottom:0;
-  background:rgba(0,0,0,0.3);
-  display:none;
-  justify-content:center;
-  align-items:center;
-}
-.modal-box{
-  background:white;
-  padding:20px;
-  border-radius:12px;
-  width:300px;
-}
+.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;justify-content:center;align-items:center;}
+.modal-box{background:white;padding:20px;border-radius:12px;width:300px;}
 </style>
 </head>
 
