@@ -1,390 +1,317 @@
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v17.9</title>
+import React, { useState, useEffect, useMemo } from 'react';
+import { Star, Circle, CheckCircle2, Plus, Inbox, Calendar, GripVertical, Trash2, AlertCircle } from 'lucide-react';
 
-<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+export default function FocusLifeV18() {
+  // --- 基礎狀態 ---
+  const [tasks, setTasks] = useState([
+    { id: '1', text: '完成 v18 架構設計', category: '工作', priority: 'high', completed: false, nextStep: '撰寫焦點補位邏輯', isFocusManual: true, focusDate: getTodayStr(), focusSource: 'manual', createdAt: Date.now() },
+    { id: '2', text: '回覆客戶信件', category: '工作', priority: 'medium', completed: false, nextStep: '', isFocusManual: false, focusDate: getTodayStr(), focusSource: 'auto', createdAt: Date.now() - 86400000 },
+    { id: '3', text: '採買晚餐食材', category: '個人', priority: 'low', completed: false, nextStep: '', isFocusManual: false, focusDate: null, focusSource: null, createdAt: Date.now() },
+    { id: '4', text: '閱讀設計系統文章', category: '學習', priority: 'medium', completed: false, nextStep: '', isFocusManual: false, focusDate: null, focusSource: null, createdAt: Date.now() - 172800000 }
+  ]);
+  const [inbox, setInbox] = useState([
+    { id: 'i1', text: '突然想到要買牛奶', createdAt: Date.now() }
+  ]);
+  const [categories, setCategories] = useState(['工作', '個人', '學習', '未分類']);
+  const [activeCategory, setActiveCategory] = useState('工作');
+  
+  const [newTaskText, setNewTaskText] = useState('');
+  const [newInboxText, setNewInboxText] = useState('');
 
-<script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
-import {
-  getFirestore,
-  collection,
-  addDoc,
-  onSnapshot,
-  doc,
-  updateDoc,
-  deleteDoc,
-  serverTimestamp,
-  getDocs
-} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
-
-const firebaseConfig = {
-  apiKey: "AIzaSyBMBfNwA0JEISkafYNx73b2y5jUf5_81vc",
-  authDomain: "focuslife-app-eeba5.firebaseapp.com",
-  projectId: "focuslife-app-eeba5"
-};
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-
-const state = { tasks: [], categories: [] };
-let currentCategory = "全部";
-let currentYear = new Date().getFullYear();
-let currentMonth = new Date().getMonth();
-
-/* ---------- 功能清單 ---------- */
-
-window.toggleFeaturePage=function(){
-  const page=document.getElementById("featurePage");
-  page.style.display=page.style.display==="block"?"none":"block";
-};
-
-/* ---------- 分類 ---------- */
-
-function loadCategories(){
-  onSnapshot(collection(db,"categories"), snap=>{
-    state.categories = snap.docs.map(d=>({id:d.id,...d.data()}));
-    renderCategoryUI();
-    renderCategorySelects();
-  });
-}
-
-function renderCategorySelects(){
-  const main=document.getElementById("categorySelect");
-  const modal=document.getElementById("modalCategory");
-
-  if(main){
-    main.innerHTML=`<option>未分類</option>`;
-    state.categories.forEach(cat=>{
-      main.innerHTML+=`<option>${cat.name}</option>`;
-    });
+  // --- 輔助函數 ---
+  function getTodayStr() {
+    return new Date().toISOString().split('T')[0];
   }
 
-  if(modal){
-    modal.innerHTML=`<option>未分類</option>`;
-    state.categories.forEach(cat=>{
-      modal.innerHTML+=`<option>${cat.name}</option>`;
-    });
-  }
-}
+  // --- 焦點系統邏輯 (Focus System) ---
+  const todayStr = getTodayStr();
 
-window.addCategory=async function(){
-  const val=document.getElementById("newCategory").value.trim();
-  if(!val) return;
-  await addDoc(collection(db,"categories"),{
-    name:val,
-    created:serverTimestamp()
-  });
-  document.getElementById("newCategory").value="";
-};
+  // 1. 每日刷新與補位邏輯
+  const maintainFocus = (currentTasks) => {
+    let updatedTasks = [...currentTasks];
+    
+    // 取得當前有效的焦點 (未完成 且 focusDate 是今天)
+    const currentFocus = updatedTasks.filter(t => !t.completed && t.focusDate === todayStr);
+    
+    // 如果焦點少於 3 個，進行補位
+    if (currentFocus.length < 3) {
+      const slotsToFill = 3 - currentFocus.length;
+      
+      // 尋找可補位的任務：未完成、非今日焦點、非手動標記
+      const eligibleTasks = updatedTasks.filter(t => 
+        !t.completed && 
+        t.focusDate !== todayStr && 
+        !t.isFocusManual
+      );
 
-window.deleteCategory=async function(id,name){
-  const tasksSnap=await getDocs(collection(db,"tasks"));
-  for(const t of tasksSnap.docs){
-    if(t.data().category===name){
-      await updateDoc(doc(db,"tasks",t.id),{category:"未分類"});
+      // 簡單的優先級排序 (高 -> 中 -> 低 -> 舊) 作為自動推薦邏輯
+      eligibleTasks.sort((a, b) => {
+        const pWeight = { high: 3, medium: 2, low: 1 };
+        if (pWeight[a.priority] !== pWeight[b.priority]) {
+          return pWeight[b.priority] - pWeight[a.priority];
+        }
+        return a.createdAt - b.createdAt;
+      });
+
+      // 補上空缺
+      for (let i = 0; i < Math.min(slotsToFill, eligibleTasks.length); i++) {
+        const taskToUpdate = eligibleTasks[i];
+        const index = updatedTasks.findIndex(t => t.id === taskToUpdate.id);
+        if (index !== -1) {
+          updatedTasks[index] = {
+            ...updatedTasks[index],
+            focusDate: todayStr,
+            focusSource: 'auto'
+          };
+        }
+      }
     }
-  }
-  await deleteDoc(doc(db,"categories",id));
-  if(currentCategory===name) currentCategory="全部";
-};
-
-window.changeCategory=function(cat){
-  currentCategory=cat;
-  renderTasks();
-  renderCategoryUI();
-};
-
-let longPressTimer=null;
-let activeDelete=null;
-
-function renderCategoryUI(){
-  const container=document.getElementById("categoryScroll");
-  container.innerHTML="";
-
-  function createCat(name,id){
-    const div=document.createElement("div");
-    div.className="cat-item"+(currentCategory===name?" active":"");
-    div.innerHTML=`<span>${name}</span><span class="delete-btn">✕</span>`;
-    const del=div.querySelector(".delete-btn");
-    del.style.display="none";
-
-    div.onclick=()=>changeCategory(name);
-
-    div.addEventListener("touchstart",()=>{
-      longPressTimer=setTimeout(()=>{
-        if(activeDelete) activeDelete.style.display="none";
-        del.style.display="inline";
-        activeDelete=del;
-      },800);
-    });
-
-    div.addEventListener("touchend",()=>clearTimeout(longPressTimer));
-
-    del.onclick=(e)=>{
-      e.stopPropagation();
-      deleteCategory(id,name);
-    };
-
-    container.appendChild(div);
-  }
-
-  createCat("全部");
-  createCat("未分類");
-
-  state.categories.forEach(cat=>{
-    createCat(cat.name,cat.id);
-  });
-
-  document.body.onclick=()=>{
-    if(activeDelete){
-      activeDelete.style.display="none";
-      activeDelete=null;
-    }
+    return updatedTasks;
   };
-}
 
-/* ---------- 任務 ---------- */
-
-function loadTasks(){
-  onSnapshot(collection(db,"tasks"), snap=>{
-    state.tasks=snap.docs.map(d=>({id:d.id,...d.data()}));
-    renderTasks();
-    renderCalendar();
-  });
-}
-
-window.addTask=async function(dateFromCalendar=null){
-  const title=dateFromCalendar
-    ? document.getElementById("modalTaskInput").value.trim()
-    : document.getElementById("taskInput").value.trim();
-
-  if(!title) return;
-
-  const due=dateFromCalendar
-    ? dateFromCalendar
-    : document.getElementById("taskDue").value;
-
-  const category=dateFromCalendar
-    ? document.getElementById("modalCategory").value
-    : document.getElementById("categorySelect").value;
-
-  const priority=dateFromCalendar
-    ? document.getElementById("modalPriority").value
-    : document.getElementById("prioritySelect").value;
-
-  await addDoc(collection(db,"tasks"),{
-    title,
-    dueDate:due||"",
-    category:category||"未分類",
-    priority:priority||"中",
-    note:"",
-    completed:false,
-    order:Date.now(),
-    created:serverTimestamp()
-  });
-
-  if(dateFromCalendar){
-    document.getElementById("modalTaskInput").value="";
-  }else{
-    document.getElementById("taskInput").value="";
-  }
-};
-
-window.toggleTask=async function(task){
-  await updateDoc(doc(db,"tasks",task.id),{
-    completed:!task.completed
-  });
-};
-
-window.deleteTask=async id=>{
-  await deleteDoc(doc(db,"tasks",id));
-};
-
-function priorityClass(p){
-  if(p==="高") return "p-high";
-  if(p==="中") return "p-mid";
-  return "p-low";
-}
-
-function renderTasks(){
-  const container=document.getElementById("tasksContainer");
-  container.innerHTML="";
-
-  const filtered=state.tasks
-    .filter(t=>currentCategory==="全部"||t.category===currentCategory)
-    .sort((a,b)=>{
-      if(a.completed!==b.completed) return a.completed-b.completed;
-      return (a.order||0)-(b.order||0);
+  // 初始載入與跨日刷新
+  useEffect(() => {
+    setTasks(prev => {
+      let nextTasks = prev.map(t => {
+        // 清除昨天的自動焦點，保留手動焦點但更新日期
+        if (t.focusDate && t.focusDate !== todayStr) {
+          if (t.isFocusManual) {
+            return { ...t, focusDate: todayStr };
+          } else {
+            return { ...t, focusDate: null, focusSource: null };
+          }
+        }
+        return t;
+      });
+      return maintainFocus(nextTasks);
     });
+  }, []);
 
-  filtered.forEach(task=>{
-    container.innerHTML+=`
-      <div class="task-card ${task.completed?"completed":""}" data-id="${task.id}">
-        <div class="task-row">
-          <div>
-            <input type="checkbox" ${task.completed?"checked":""}
-              onchange='toggleTask(${JSON.stringify(task)})'>
-            ${task.title}
-            ${task.priority?`<span class="priority ${priorityClass(task.priority)}">${task.priority}</span>`:""}
+  // --- 任務操作 ---
+  const toggleTaskComplete = (id) => {
+    setTasks(prev => {
+      const nextTasks = prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
+      // 完成任務後，觸發穩定補位
+      return maintainFocus(nextTasks);
+    });
+  };
+
+  const toggleFocusManual = (id) => {
+    setTasks(prev => {
+      const nextTasks = prev.map(t => {
+        if (t.id === id) {
+          const isNowManual = !t.isFocusManual;
+          return {
+            ...t,
+            isFocusManual: isNowManual,
+            focusDate: isNowManual ? todayStr : null,
+            focusSource: isNowManual ? 'manual' : null
+          };
+        }
+        return t;
+      });
+      return maintainFocus(nextTasks);
+    });
+  };
+
+  const updateNextStep = (id, stepText) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, nextStep: stepText } : t));
+  };
+
+  const addTask = (e) => {
+    e.preventDefault();
+    if (!newTaskText.trim()) return;
+    const newTask = {
+      id: Date.now().toString(),
+      text: newTaskText,
+      category: activeCategory,
+      priority: 'medium',
+      completed: false,
+      nextStep: '',
+      isFocusManual: false,
+      focusDate: null,
+      focusSource: null,
+      createdAt: Date.now()
+    };
+    setTasks(prev => maintainFocus([...prev, newTask]));
+    setNewTaskText('');
+  };
+
+  const addInbox = (e) => {
+    e.preventDefault();
+    if (!newInboxText.trim()) return;
+    setInbox(prev => [...prev, { id: Date.now().toString(), text: newInboxText, createdAt: Date.now() }]);
+    setNewInboxText('');
+  };
+
+  // --- 衍生資料 ---
+  const focusTasks = tasks.filter(t => !t.completed && t.focusDate === todayStr).slice(0, 3);
+  const activeCategoryTasks = tasks.filter(t => t.category === activeCategory && !t.completed);
+  const completedTasks = tasks.filter(t => t.category === activeCategory && t.completed);
+  
+  const stats = {
+    uncompleted: tasks.filter(t => !t.completed).length,
+    stagnant: tasks.filter(t => !t.completed && (Date.now() - t.createdAt > 7 * 86400000)).length,
+    inboxCount: inbox.length
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans pb-20">
+      {/* 1. 精神層：不可移除的標語 */}
+      <div className="w-full bg-gray-100 text-center py-1.5 border-b border-gray-200 sticky top-0 z-50">
+        <span className="text-xs font-medium text-gray-400 tracking-widest uppercase">細節成就卓越</span>
+      </div>
+
+      <div className="max-w-md mx-auto p-4 space-y-6">
+        
+        {/* 狀態層：系統狀態條 */}
+        <div className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-gray-100 text-sm">
+          <div className="flex items-center text-gray-600">
+            <Circle className="w-4 h-4 mr-1.5 text-blue-500" />
+            <span>未完成 {stats.uncompleted}</span>
           </div>
-          <div>
-            <button onclick="deleteTask('${task.id}')">✕</button>
+          <div className="flex items-center text-gray-600">
+            <AlertCircle className="w-4 h-4 mr-1.5 text-orange-400" />
+            <span>停滯 {stats.stagnant}</span>
+          </div>
+          <div className="flex items-center text-gray-600">
+            <Inbox className="w-4 h-4 mr-1.5 text-purple-500" />
+            <span>收件匣 {stats.inboxCount}</span>
           </div>
         </div>
+
+        {/* 2. 流入層：InBox */}
+        <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="bg-purple-50 px-4 py-2 border-b border-purple-100 flex items-center">
+            <Inbox className="w-4 h-4 text-purple-600 mr-2" />
+            <h2 className="text-sm font-bold text-purple-800">InBox (防洪區)</h2>
+          </div>
+          <div className="p-3">
+            <form onSubmit={addInbox} className="flex gap-2 mb-3">
+              <input 
+                type="text" 
+                value={newInboxText}
+                onChange={e => setNewInboxText(e.target.value)}
+                placeholder="快速紀錄任何想法..." 
+                className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
+              />
+              <button type="submit" className="bg-purple-600 text-white p-2 rounded-lg">
+                <Plus className="w-4 h-4" />
+              </button>
+            </form>
+            <div className="space-y-2">
+              {inbox.map(item => (
+                <div key={item.id} className="text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded border border-gray-100 flex justify-between items-center">
+                  <span>{item.text}</span>
+                  <button onClick={() => setInbox(prev => prev.filter(i => i.id !== item.id))} className="text-gray-400 hover:text-red-500">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+              {inbox.length === 0 && <p className="text-xs text-gray-400 text-center py-2">目前沒有新想法</p>}
+            </div>
+          </div>
+        </section>
+
+        {/* 3. 焦點層：今日焦點 */}
+        <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center justify-between">
+            <div className="flex items-center">
+              <Star className="w-4 h-4 text-blue-600 mr-2 fill-current" />
+              <h2 className="text-sm font-bold text-blue-800">今日焦點</h2>
+            </div>
+            <span className="text-xs text-blue-500">穩定推進</span>
+          </div>
+          <div className="p-3 space-y-3">
+            {focusTasks.length === 0 ? (
+              <p className="text-sm text-gray-400 text-center py-4">今日焦點已清空，做得好！</p>
+            ) : (
+              focusTasks.map(task => (
+                <div key={task.id} className="flex flex-col bg-gray-50 p-3 rounded-lg border border-gray-200">
+                  <div className="flex items-start gap-3">
+                    <button onClick={() => toggleTaskComplete(task.id)} className="mt-0.5">
+                      <Circle className="w-5 h-5 text-gray-400 hover:text-blue-500" />
+                    </button>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-gray-800 truncate">{task.text}</p>
+                      {/* 4. 推進層：NextStep 內聯編輯 */}
+                      <div className="mt-2 flex items-center bg-white border border-gray-200 rounded px-2 py-1">
+                        <span className="text-xs font-bold text-blue-500 mr-2 whitespace-nowrap">Next:</span>
+                        <input 
+                          type="text"
+                          value={task.nextStep || ''}
+                          onChange={(e) => updateNextStep(task.id, e.target.value)}
+                          placeholder="下一步具體行動..."
+                          className="flex-1 text-xs bg-transparent focus:outline-none text-gray-600"
+                        />
+                      </div>
+                    </div>
+                    <button onClick={() => toggleFocusManual(task.id)}>
+                      <Star className={`w-5 h-5 ${task.isFocusManual ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+
+        {/* 任務主清單 (含分類) */}
+        <section>
+          {/* 分類 Tabs (橫向滑動) */}
+          <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-4 pb-1">
+            {categories.map(cat => (
+              <button
+                key={cat}
+                onClick={() => setActiveCategory(cat)}
+                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                  activeCategory === cat 
+                    ? 'bg-gray-800 text-white shadow-sm' 
+                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+
+          {/* 新增任務 */}
+          <form onSubmit={addTask} className="flex gap-2 mb-4">
+            <input 
+              type="text" 
+              value={newTaskText}
+              onChange={e => setNewTaskText(e.target.value)}
+              placeholder={`新增任務至「${activeCategory}」...`} 
+              className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-800"
+            />
+            <button type="submit" className="bg-gray-800 text-white px-4 rounded-xl shadow-sm">
+              <Plus className="w-5 h-5" />
+            </button>
+          </form>
+
+          {/* 任務列表 */}
+          <div className="space-y-2">
+            {activeCategoryTasks.map(task => (
+              <div key={task.id} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 shadow-sm group">
+                <GripVertical className="w-4 h-4 text-gray-300 cursor-grab active:cursor-grabbing" />
+                <button onClick={() => toggleTaskComplete(task.id)}>
+                  <Circle className="w-5 h-5 text-gray-400 hover:text-gray-600" />
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-gray-800 truncate">{task.text}</p>
+                </div>
+                <button onClick={() => toggleFocusManual(task.id)}>
+                  <Star className={`w-4 h-4 ${task.isFocusManual ? 'text-yellow-400 fill-current' : 'text-gray-300 hover:text-yellow-400'}`} />
+                </button>
+              </div>
+            ))}
+            
+            {activeCategoryTasks.length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-6">此分類目前無待辦任務</p>
+            )}
+          </div>
+        </section>
       </div>
-    `;
-  });
-
-  new Sortable(container,{
-    animation:150,
-    onEnd:async function(){
-      const items=container.children;
-      for(let i=0;i<items.length;i++){
-        await updateDoc(doc(db,"tasks",items[i].dataset.id),{order:i});
-      }
-    }
-  });
-}
-
-/* ---------- 月曆 ---------- */
-
-window.changeMonth=function(offset){
-  currentMonth+=offset;
-  if(currentMonth<0){currentMonth=11;currentYear--;}
-  if(currentMonth>11){currentMonth=0;currentYear++;}
-  renderCalendar();
-};
-
-function renderCalendar(){
-  const cal=document.getElementById("calendarContainer");
-  const title=document.getElementById("calendarTitle");
-  cal.innerHTML="";
-  title.innerText=`${currentYear} 年 ${currentMonth+1} 月`;
-
-  const first=new Date(currentYear,currentMonth,1).getDay();
-  const days=new Date(currentYear,currentMonth+1,0).getDate();
-  const weekdays=["日","一","二","三","四","五","六"];
-
-  weekdays.forEach(d=>cal.innerHTML+=`<div class="weekday">${d}</div>`);
-
-  for(let i=0;i<first;i++) cal.innerHTML+="<div></div>";
-
-  for(let d=1;d<=days;d++){
-    const dateStr=`${currentYear}-${String(currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-    const hasTask=state.tasks.some(t=>t.dueDate===dateStr);
-
-    cal.innerHTML+=`
-      <div class="calendar-day" onclick="openCalendarModal('${dateStr}')">
-        ${d}
-        ${hasTask?`<div class="task-dot"></div>`:""}
-      </div>
-    `;
-  }
-}
-
-window.openCalendarModal=function(date){
-  const modal=document.getElementById("calendarModal");
-  const content=document.getElementById("modalContent");
-  const tasks=state.tasks.filter(t=>t.dueDate===date);
-
-  content.innerHTML=`
-    <h3>${date}</h3>
-    <div>
-      ${tasks.length===0?"當日沒有任務":
-        tasks.map(t=>`• ${t.title}`).join("<br>")
-      }
     </div>
-    <hr>
-    <input id="modalTaskInput" placeholder="新增任務">
-    <select id="modalCategory"></select>
-    <select id="modalPriority">
-      <option value="高">高</option>
-      <option value="中" selected>中</option>
-      <option value="低">低</option>
-    </select>
-    <button onclick="addTask('${date}')">新增</button>
-  `;
-
-  renderCategorySelects();
-  modal.style.display="flex";
-};
-
-window.closeModal=function(){
-  document.getElementById("calendarModal").style.display="none";
-};
-
-/* ---------- 初始化 ---------- */
-
-loadCategories();
-loadTasks();
-
-</script>
-
-<style>
-body{font-family:Arial;background:#f6f7f9;padding:20px;}
-.category-scroll{display:flex;overflow-x:auto;gap:8px;margin-bottom:10px;}
-.cat-item{padding:6px 14px;background:#e5e7eb;border-radius:20px;display:flex;gap:6px;}
-.cat-item.active{background:#2563eb;color:white;}
-.delete-btn{font-size:12px;color:#dc2626;}
-.task-card{background:white;padding:14px;margin:10px 0;border-radius:12px;}
-.task-row{display:flex;justify-content:space-between;}
-.completed{text-decoration:line-through;color:#aaa;}
-.priority{padding:2px 8px;border-radius:12px;font-size:12px;margin-left:8px;}
-.p-high{background:#fee2e2;color:#b91c1c;}
-.p-mid{background:#ffedd5;color:#c2410c;}
-.p-low{background:#e5e7eb;color:#374151;}
-.calendar{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-top:10px;}
-.weekday{text-align:center;font-size:12px;color:#666;}
-.calendar-day{background:white;padding:10px;border-radius:10px;text-align:center;cursor:pointer;}
-.task-dot{width:6px;height:6px;background:#2563eb;border-radius:50%;margin:4px auto 0;}
-.modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.3);display:none;justify-content:center;align-items:center;}
-.modal-box{background:white;padding:20px;border-radius:12px;width:300px;}
-</style>
-</head>
-
-<body>
-
-<button onclick="toggleFeaturePage()">📋 系統功能清單</button>
-
-<div id="featurePage" style="display:none;">
-✅ 任務管理<br>
-✅ 分類管理<br>
-✅ 優先級<br>
-✅ 月曆互動<br>
-✅ 雲端同步
-</div>
-
-<h3>分類</h3>
-<div class="category-scroll" id="categoryScroll"></div>
-<input id="newCategory" placeholder="新增分類">
-<button onclick="addCategory()">新增分類</button>
-
-<h3>新增任務</h3>
-<input id="taskInput" placeholder="任務名稱">
-<input type="date" id="taskDue">
-<select id="categorySelect"></select>
-<select id="prioritySelect">
-  <option value="高">高</option>
-  <option value="中" selected>中</option>
-  <option value="低">低</option>
-</select>
-<button onclick="addTask()">新增</button>
-
-<div id="tasksContainer"></div>
-
-<h3>📅 月曆</h3>
-<button onclick="changeMonth(-1)">‹</button>
-<span id="calendarTitle"></span>
-<button onclick="changeMonth(1)">›</button>
-<div class="calendar" id="calendarContainer"></div>
-
-<div id="calendarModal" class="modal" onclick="closeModal()">
-  <div class="modal-box" id="modalContent" onclick="event.stopPropagation()"></div>
-</div>
-
-</body>
-</html>
+  );
+}
