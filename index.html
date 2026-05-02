@@ -1,317 +1,312 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Star, Circle, CheckCircle2, Plus, Inbox, Calendar, GripVertical, Trash2, AlertCircle } from 'lucide-react';
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FocusLife v18.1</title>
 
-export default function FocusLifeV18() {
-  // --- 基礎狀態 ---
-  const [tasks, setTasks] = useState([
-    { id: '1', text: '完成 v18 架構設計', category: '工作', priority: 'high', completed: false, nextStep: '撰寫焦點補位邏輯', isFocusManual: true, focusDate: getTodayStr(), focusSource: 'manual', createdAt: Date.now() },
-    { id: '2', text: '回覆客戶信件', category: '工作', priority: 'medium', completed: false, nextStep: '', isFocusManual: false, focusDate: getTodayStr(), focusSource: 'auto', createdAt: Date.now() - 86400000 },
-    { id: '3', text: '採買晚餐食材', category: '個人', priority: 'low', completed: false, nextStep: '', isFocusManual: false, focusDate: null, focusSource: null, createdAt: Date.now() },
-    { id: '4', text: '閱讀設計系統文章', category: '學習', priority: 'medium', completed: false, nextStep: '', isFocusManual: false, focusDate: null, focusSource: null, createdAt: Date.now() - 172800000 }
-  ]);
-  const [inbox, setInbox] = useState([
-    { id: 'i1', text: '突然想到要買牛奶', createdAt: Date.now() }
-  ]);
-  const [categories, setCategories] = useState(['工作', '個人', '學習', '未分類']);
-  const [activeCategory, setActiveCategory] = useState('工作');
-  
-  const [newTaskText, setNewTaskText] = useState('');
-  const [newInboxText, setNewInboxText] = useState('');
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
 
-  // --- 輔助函數 ---
-  function getTodayStr() {
-    return new Date().toISOString().split('T')[0];
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  onSnapshot,
+  doc,
+  updateDoc,
+  deleteDoc,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_AUTH_DOMAIN",
+  projectId: "YOUR_PROJECT_ID"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+const state = { tasks: [], inbox: [] };
+let currentCategory = "全部";
+
+const PRIORITY_WEIGHT = { 高:3, 中:2, 低:1 };
+const STAGNANT_DAYS = 3;
+
+/* =============================
+   Load Tasks
+============================= */
+
+function loadTasks(){
+  onSnapshot(collection(db,"tasks"), snap=>{
+    state.tasks = snap.docs.map(d=>({
+      id:d.id,
+      ...d.data()
+    }));
+    renderAll();
+  });
+}
+
+/* =============================
+   Add Task
+============================= */
+
+window.addTask = async function(){
+  const title = document.getElementById("taskInput").value.trim();
+  if(!title) return;
+
+  const priority = document.getElementById("prioritySelect").value;
+
+  await addDoc(collection(db,"tasks"),{
+    title,
+    category:"未分類",
+    priority,
+    completed:false,
+    nextStep:"",
+    isFocusManual:false,
+    createdAt:Date.now(),
+    updatedAt:null
+  });
+
+  document.getElementById("taskInput").value="";
+};
+
+/* =============================
+   Toggle Complete
+============================= */
+
+window.toggleTask = async function(task){
+  await updateDoc(doc(db,"tasks",task.id),{
+    completed:!task.completed,
+    updatedAt:Date.now()
+  });
+};
+
+/* =============================
+   Toggle Manual Focus ⭐
+============================= */
+
+window.toggleFocusManual = async function(task){
+
+  const manualCount = state.tasks.filter(t=>
+    t.isFocusManual && !t.completed
+  ).length;
+
+  if(!task.isFocusManual && manualCount >= 3){
+    alert("最多只能 3 個手動焦點");
+    return;
   }
 
-  // --- 焦點系統邏輯 (Focus System) ---
-  const todayStr = getTodayStr();
+  await updateDoc(doc(db,"tasks",task.id),{
+    isFocusManual:!task.isFocusManual,
+    updatedAt:Date.now()
+  });
+};
 
-  // 1. 每日刷新與補位邏輯
-  const maintainFocus = (currentTasks) => {
-    let updatedTasks = [...currentTasks];
-    
-    // 取得當前有效的焦點 (未完成 且 focusDate 是今天)
-    const currentFocus = updatedTasks.filter(t => !t.completed && t.focusDate === todayStr);
-    
-    // 如果焦點少於 3 個，進行補位
-    if (currentFocus.length < 3) {
-      const slotsToFill = 3 - currentFocus.length;
-      
-      // 尋找可補位的任務：未完成、非今日焦點、非手動標記
-      const eligibleTasks = updatedTasks.filter(t => 
-        !t.completed && 
-        t.focusDate !== todayStr && 
-        !t.isFocusManual
-      );
+/* =============================
+   Update Next Step
+============================= */
 
-      // 簡單的優先級排序 (高 -> 中 -> 低 -> 舊) 作為自動推薦邏輯
-      eligibleTasks.sort((a, b) => {
-        const pWeight = { high: 3, medium: 2, low: 1 };
-        if (pWeight[a.priority] !== pWeight[b.priority]) {
-          return pWeight[b.priority] - pWeight[a.priority];
-        }
-        return a.createdAt - b.createdAt;
-      });
+window.updateNextStep = async function(id,value){
+  await updateDoc(doc(db,"tasks",id),{
+    nextStep:value,
+    updatedAt:Date.now()
+  });
+};
 
-      // 補上空缺
-      for (let i = 0; i < Math.min(slotsToFill, eligibleTasks.length); i++) {
-        const taskToUpdate = eligibleTasks[i];
-        const index = updatedTasks.findIndex(t => t.id === taskToUpdate.id);
-        if (index !== -1) {
-          updatedTasks[index] = {
-            ...updatedTasks[index],
-            focusDate: todayStr,
-            focusSource: 'auto'
-          };
-        }
-      }
-    }
-    return updatedTasks;
-  };
+/* =============================
+   Derived Focus (核心)
+============================= */
 
-  // 初始載入與跨日刷新
-  useEffect(() => {
-    setTasks(prev => {
-      let nextTasks = prev.map(t => {
-        // 清除昨天的自動焦點，保留手動焦點但更新日期
-        if (t.focusDate && t.focusDate !== todayStr) {
-          if (t.isFocusManual) {
-            return { ...t, focusDate: todayStr };
-          } else {
-            return { ...t, focusDate: null, focusSource: null };
-          }
-        }
-        return t;
-      });
-      return maintainFocus(nextTasks);
-    });
-  }, []);
+function getFocusTasks(){
 
-  // --- 任務操作 ---
-  const toggleTaskComplete = (id) => {
-    setTasks(prev => {
-      const nextTasks = prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t);
-      // 完成任務後，觸發穩定補位
-      return maintainFocus(nextTasks);
-    });
-  };
-
-  const toggleFocusManual = (id) => {
-    setTasks(prev => {
-      const nextTasks = prev.map(t => {
-        if (t.id === id) {
-          const isNowManual = !t.isFocusManual;
-          return {
-            ...t,
-            isFocusManual: isNowManual,
-            focusDate: isNowManual ? todayStr : null,
-            focusSource: isNowManual ? 'manual' : null
-          };
-        }
-        return t;
-      });
-      return maintainFocus(nextTasks);
-    });
-  };
-
-  const updateNextStep = (id, stepText) => {
-    setTasks(prev => prev.map(t => t.id === id ? { ...t, nextStep: stepText } : t));
-  };
-
-  const addTask = (e) => {
-    e.preventDefault();
-    if (!newTaskText.trim()) return;
-    const newTask = {
-      id: Date.now().toString(),
-      text: newTaskText,
-      category: activeCategory,
-      priority: 'medium',
-      completed: false,
-      nextStep: '',
-      isFocusManual: false,
-      focusDate: null,
-      focusSource: null,
-      createdAt: Date.now()
-    };
-    setTasks(prev => maintainFocus([...prev, newTask]));
-    setNewTaskText('');
-  };
-
-  const addInbox = (e) => {
-    e.preventDefault();
-    if (!newInboxText.trim()) return;
-    setInbox(prev => [...prev, { id: Date.now().toString(), text: newInboxText, createdAt: Date.now() }]);
-    setNewInboxText('');
-  };
-
-  // --- 衍生資料 ---
-  const focusTasks = tasks.filter(t => !t.completed && t.focusDate === todayStr).slice(0, 3);
-  const activeCategoryTasks = tasks.filter(t => t.category === activeCategory && !t.completed);
-  const completedTasks = tasks.filter(t => t.category === activeCategory && t.completed);
-  
-  const stats = {
-    uncompleted: tasks.filter(t => !t.completed).length,
-    stagnant: tasks.filter(t => !t.completed && (Date.now() - t.createdAt > 7 * 86400000)).length,
-    inboxCount: inbox.length
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans pb-20">
-      {/* 1. 精神層：不可移除的標語 */}
-      <div className="w-full bg-gray-100 text-center py-1.5 border-b border-gray-200 sticky top-0 z-50">
-        <span className="text-xs font-medium text-gray-400 tracking-widest uppercase">細節成就卓越</span>
-      </div>
-
-      <div className="max-w-md mx-auto p-4 space-y-6">
-        
-        {/* 狀態層：系統狀態條 */}
-        <div className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm border border-gray-100 text-sm">
-          <div className="flex items-center text-gray-600">
-            <Circle className="w-4 h-4 mr-1.5 text-blue-500" />
-            <span>未完成 {stats.uncompleted}</span>
-          </div>
-          <div className="flex items-center text-gray-600">
-            <AlertCircle className="w-4 h-4 mr-1.5 text-orange-400" />
-            <span>停滯 {stats.stagnant}</span>
-          </div>
-          <div className="flex items-center text-gray-600">
-            <Inbox className="w-4 h-4 mr-1.5 text-purple-500" />
-            <span>收件匣 {stats.inboxCount}</span>
-          </div>
-        </div>
-
-        {/* 2. 流入層：InBox */}
-        <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-purple-50 px-4 py-2 border-b border-purple-100 flex items-center">
-            <Inbox className="w-4 h-4 text-purple-600 mr-2" />
-            <h2 className="text-sm font-bold text-purple-800">InBox (防洪區)</h2>
-          </div>
-          <div className="p-3">
-            <form onSubmit={addInbox} className="flex gap-2 mb-3">
-              <input 
-                type="text" 
-                value={newInboxText}
-                onChange={e => setNewInboxText(e.target.value)}
-                placeholder="快速紀錄任何想法..." 
-                className="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
-              />
-              <button type="submit" className="bg-purple-600 text-white p-2 rounded-lg">
-                <Plus className="w-4 h-4" />
-              </button>
-            </form>
-            <div className="space-y-2">
-              {inbox.map(item => (
-                <div key={item.id} className="text-sm text-gray-600 bg-gray-50 px-3 py-2 rounded border border-gray-100 flex justify-between items-center">
-                  <span>{item.text}</span>
-                  <button onClick={() => setInbox(prev => prev.filter(i => i.id !== item.id))} className="text-gray-400 hover:text-red-500">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-              {inbox.length === 0 && <p className="text-xs text-gray-400 text-center py-2">目前沒有新想法</p>}
-            </div>
-          </div>
-        </section>
-
-        {/* 3. 焦點層：今日焦點 */}
-        <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-          <div className="bg-blue-50 px-4 py-2 border-b border-blue-100 flex items-center justify-between">
-            <div className="flex items-center">
-              <Star className="w-4 h-4 text-blue-600 mr-2 fill-current" />
-              <h2 className="text-sm font-bold text-blue-800">今日焦點</h2>
-            </div>
-            <span className="text-xs text-blue-500">穩定推進</span>
-          </div>
-          <div className="p-3 space-y-3">
-            {focusTasks.length === 0 ? (
-              <p className="text-sm text-gray-400 text-center py-4">今日焦點已清空，做得好！</p>
-            ) : (
-              focusTasks.map(task => (
-                <div key={task.id} className="flex flex-col bg-gray-50 p-3 rounded-lg border border-gray-200">
-                  <div className="flex items-start gap-3">
-                    <button onClick={() => toggleTaskComplete(task.id)} className="mt-0.5">
-                      <Circle className="w-5 h-5 text-gray-400 hover:text-blue-500" />
-                    </button>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-800 truncate">{task.text}</p>
-                      {/* 4. 推進層：NextStep 內聯編輯 */}
-                      <div className="mt-2 flex items-center bg-white border border-gray-200 rounded px-2 py-1">
-                        <span className="text-xs font-bold text-blue-500 mr-2 whitespace-nowrap">Next:</span>
-                        <input 
-                          type="text"
-                          value={task.nextStep || ''}
-                          onChange={(e) => updateNextStep(task.id, e.target.value)}
-                          placeholder="下一步具體行動..."
-                          className="flex-1 text-xs bg-transparent focus:outline-none text-gray-600"
-                        />
-                      </div>
-                    </div>
-                    <button onClick={() => toggleFocusManual(task.id)}>
-                      <Star className={`w-5 h-5 ${task.isFocusManual ? 'text-yellow-400 fill-current' : 'text-gray-300'}`} />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
-
-        {/* 任務主清單 (含分類) */}
-        <section>
-          {/* 分類 Tabs (橫向滑動) */}
-          <div className="flex overflow-x-auto hide-scrollbar gap-2 mb-4 pb-1">
-            {categories.map(cat => (
-              <button
-                key={cat}
-                onClick={() => setActiveCategory(cat)}
-                className={`whitespace-nowrap px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                  activeCategory === cat 
-                    ? 'bg-gray-800 text-white shadow-sm' 
-                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                {cat}
-              </button>
-            ))}
-          </div>
-
-          {/* 新增任務 */}
-          <form onSubmit={addTask} className="flex gap-2 mb-4">
-            <input 
-              type="text" 
-              value={newTaskText}
-              onChange={e => setNewTaskText(e.target.value)}
-              placeholder={`新增任務至「${activeCategory}」...`} 
-              className="flex-1 bg-white border border-gray-200 rounded-xl px-4 py-3 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-gray-800"
-            />
-            <button type="submit" className="bg-gray-800 text-white px-4 rounded-xl shadow-sm">
-              <Plus className="w-5 h-5" />
-            </button>
-          </form>
-
-          {/* 任務列表 */}
-          <div className="space-y-2">
-            {activeCategoryTasks.map(task => (
-              <div key={task.id} className="flex items-center gap-3 bg-white p-3 rounded-xl border border-gray-100 shadow-sm group">
-                <GripVertical className="w-4 h-4 text-gray-300 cursor-grab active:cursor-grabbing" />
-                <button onClick={() => toggleTaskComplete(task.id)}>
-                  <Circle className="w-5 h-5 text-gray-400 hover:text-gray-600" />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-800 truncate">{task.text}</p>
-                </div>
-                <button onClick={() => toggleFocusManual(task.id)}>
-                  <Star className={`w-4 h-4 ${task.isFocusManual ? 'text-yellow-400 fill-current' : 'text-gray-300 hover:text-yellow-400'}`} />
-                </button>
-              </div>
-            ))}
-            
-            {activeCategoryTasks.length === 0 && (
-              <p className="text-sm text-gray-400 text-center py-6">此分類目前無待辦任務</p>
-            )}
-          </div>
-        </section>
-      </div>
-    </div>
+  const manual = state.tasks.filter(t=>
+    !t.completed && t.isFocusManual
   );
+
+  const auto = state.tasks
+    .filter(t=>
+      !t.completed && !t.isFocusManual
+    )
+    .sort((a,b)=>{
+      if(PRIORITY_WEIGHT[a.priority] !== PRIORITY_WEIGHT[b.priority]){
+        return PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority];
+      }
+      return (a.createdAt||0) - (b.createdAt||0);
+    });
+
+  return [
+    ...manual,
+    ...auto.slice(0,3-manual.length)
+  ].slice(0,3);
 }
+
+/* =============================
+   Render Focus
+============================= */
+
+function renderFocus(){
+  const container = document.getElementById("focusContainer");
+  container.innerHTML="";
+
+  const focusTasks = getFocusTasks();
+
+  if(focusTasks.length===0){
+    container.innerHTML="<div class='focus-empty'>今日無焦點任務</div>";
+    return;
+  }
+
+  focusTasks.forEach(task=>{
+    container.innerHTML+=`
+      <div class="focus-card">
+        ⭐ ${task.title}
+      </div>
+    `;
+  });
+}
+
+/* =============================
+   Render Tasks
+============================= */
+
+function renderTasks(){
+
+  const container=document.getElementById("tasksContainer");
+  container.innerHTML="";
+
+  state.tasks
+    .sort((a,b)=>{
+      if(a.completed!==b.completed) return a.completed-b.completed;
+      return (a.createdAt||0)-(b.createdAt||0);
+    })
+    .forEach(task=>{
+
+      const isStalled = !task.completed &&
+        (Date.now() - (task.updatedAt||task.createdAt||0))
+        > STAGNANT_DAYS*24*60*60*1000;
+
+      container.innerHTML+=`
+        <div class="task-card">
+          <div>
+            <input type="checkbox"
+              ${task.completed?"checked":""}
+              onchange='toggleTask(${JSON.stringify(task)})'>
+
+            ${task.title}
+
+            <span onclick='toggleFocusManual(${JSON.stringify(task)})'
+              class="focus-btn">
+              ${task.isFocusManual?"⭐":"☆"}
+            </span>
+          </div>
+
+          <div class="next-step">
+            下一步：
+            <input value="${task.nextStep||""}"
+              onblur="updateNextStep('${task.id}',this.value)">
+          </div>
+
+          ${isStalled?"<div class='stalled'>建議補上下一步</div>":""}
+        </div>
+      `;
+    });
+}
+
+/* =============================
+   Render All
+============================= */
+
+function renderAll(){
+  renderFocus();
+  renderTasks();
+}
+
+/* =============================
+   Init
+============================= */
+
+loadTasks();
+
+</script>
+
+<style>
+body{
+  font-family:Arial;
+  background:#f6f7f9;
+  padding:20px;
+}
+
+.motto{
+  text-align:center;
+  font-size:14px;
+  color:#666;
+  margin-bottom:10px;
+}
+
+.focus-section{
+  background:#e0f2fe;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:15px;
+}
+
+.focus-card{
+  background:white;
+  padding:8px;
+  border-radius:8px;
+  margin:5px 0;
+}
+
+.task-card{
+  background:white;
+  padding:12px;
+  margin:10px 0;
+  border-radius:12px;
+}
+
+.next-step input{
+  width:100%;
+  border:1px solid #ddd;
+  border-radius:6px;
+}
+
+.stalled{
+  color:#d97706;
+  font-size:12px;
+  margin-top:4px;
+}
+
+.focus-btn{
+  cursor:pointer;
+  margin-left:6px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="motto">細節成就卓越</div>
+
+<div class="focus-section">
+  <h4>今日焦點</h4>
+  <div id="focusContainer"></div>
+</div>
+
+<div>
+  <input id="taskInput"
+    placeholder="新增任務..."
+    onkeypress="if(event.key==='Enter') addTask()">
+
+  <select id="prioritySelect">
+    <option value="高">高</option>
+    <option value="中" selected>中</option>
+    <option value="低">低</option>
+  </select>
+</div>
+
+<div id="tasksContainer"></div>
+
+</body>
+</html>
