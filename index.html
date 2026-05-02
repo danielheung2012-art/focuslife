@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FocusLife v18.3</title>
+<title>FocusLife v18.4</title>
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-app.js";
@@ -17,9 +17,9 @@ import {
   deleteDoc
 } from "https://www.gstatic.com/firebasejs/12.12.1/firebase-firestore.js";
 
-/* =============================
+/* ==============================
    Firebase Config
-============================= */
+============================== */
 
 const firebaseConfig = {
   apiKey: "YOUR_API_KEY",
@@ -30,60 +30,86 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-/* =============================
-   State
-============================= */
+/* ==============================
+   Global State
+============================== */
 
 const state = {
   tasks: [],
-  inbox: []
+  inbox: [],
+  categories: [],
+  currentCategory: "全部",
+  selectedDate: null,
+  currentMonth: new Date().getMonth(),
+  currentYear: new Date().getFullYear()
 };
 
 const PRIORITY_WEIGHT = { 高:3, 中:2, 低:1 };
 const STAGNANT_DAYS = 3;
 
-/* =============================
-   Load
-============================= */
+/* ==============================
+   Load Data
+============================== */
 
 function loadTasks(){
   onSnapshot(collection(db,"tasks"), snap=>{
-    state.tasks = snap.docs.map(d=>({
-      id:d.id,
-      ...d.data()
-    }));
+    state.tasks = snap.docs.map(d=>({ id:d.id, ...d.data() }));
     renderAll();
   });
 }
 
 function loadInbox(){
   onSnapshot(collection(db,"inbox"), snap=>{
-    state.inbox = snap.docs.map(d=>({
-      id:d.id,
-      ...d.data()
-    }));
-    renderAll();
+    state.inbox = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    renderInbox();
   });
 }
 
-/* =============================
-   Task Operations
-============================= */
+function loadCategories(){
+  onSnapshot(collection(db,"categories"), snap=>{
+    state.categories = snap.docs.map(d=>({ id:d.id, ...d.data() }));
+    renderCategorySelect();
+  });
+}
 
-window.addTask = async function(){
+/* ==============================
+   Derived Focus (不儲存)
+============================== */
+
+function getFocusTasks(){
+  const manual = state.tasks.filter(t=>!t.completed && t.isFocusManual);
+  const auto = state.tasks
+    .filter(t=>!t.completed && !t.isFocusManual)
+    .sort((a,b)=>{
+      if(PRIORITY_WEIGHT[a.priority] !== PRIORITY_WEIGHT[b.priority]){
+        return PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority];
+      }
+      return (a.createdAt||0)-(b.createdAt||0);
+    });
+
+  return [...manual, ...auto.slice(0,3-manual.length)].slice(0,3);
+}
+
+/* ==============================
+   Task Operations
+============================== */
+
+window.addTask = async function(dueDate=null){
   const input = document.getElementById("taskInput");
   const title = input.value.trim();
   if(!title) return;
 
   const priority = document.getElementById("prioritySelect").value;
+  const category = document.getElementById("categorySelect").value;
 
   await addDoc(collection(db,"tasks"),{
     title,
-    category:"未分類",
+    category,
     priority,
     completed:false,
     nextStep:"",
     isFocusManual:false,
+    dueDate: dueDate || state.selectedDate || null,
     createdAt:Date.now(),
     updatedAt:null
   });
@@ -99,14 +125,8 @@ window.toggleTask = async function(task){
 };
 
 window.toggleFocusManual = async function(task){
-
-  const manualCount = state.tasks.filter(t=>
-    t.isFocusManual && !t.completed
-  ).length;
-
-  if(!task.isFocusManual && manualCount >= 3){
-    return;
-  }
+  const manualCount = state.tasks.filter(t=>t.isFocusManual && !t.completed).length;
+  if(!task.isFocusManual && manualCount >=3) return;
 
   await updateDoc(doc(db,"tasks",task.id),{
     isFocusManual:!task.isFocusManual,
@@ -121,9 +141,9 @@ window.updateNextStep = async function(id,value){
   });
 };
 
-/* =============================
-   Inbox Operations
-============================= */
+/* ==============================
+   Inbox
+============================== */
 
 window.addInbox = async function(){
   const input = document.getElementById("inboxInput");
@@ -139,7 +159,6 @@ window.addInbox = async function(){
 };
 
 window.convertInbox = async function(item){
-
   await addDoc(collection(db,"tasks"),{
     title:item.content,
     category:"未分類",
@@ -147,6 +166,7 @@ window.convertInbox = async function(item){
     completed:false,
     nextStep:"",
     isFocusManual:false,
+    dueDate:null,
     createdAt:Date.now(),
     updatedAt:null
   });
@@ -158,54 +178,86 @@ window.deleteInbox = async function(id){
   await deleteDoc(doc(db,"inbox",id));
 };
 
-/* =============================
-   Derived Focus
-============================= */
+/* ==============================
+   Categories
+============================== */
 
-function getFocusTasks(){
+window.addCategory = async function(){
+  const name = prompt("分類名稱");
+  if(!name) return;
 
-  const manual = state.tasks.filter(t=>
-    !t.completed && t.isFocusManual
-  );
+  await addDoc(collection(db,"categories"),{
+    name,
+    createdAt:Date.now()
+  });
+};
 
-  const auto = state.tasks
-    .filter(t=>
-      !t.completed && !t.isFocusManual
-    )
-    .sort((a,b)=>{
-      if(PRIORITY_WEIGHT[a.priority] !== PRIORITY_WEIGHT[b.priority]){
-        return PRIORITY_WEIGHT[b.priority] - PRIORITY_WEIGHT[a.priority];
-      }
-      return (a.createdAt||0)-(b.createdAt||0);
-    });
+function renderCategorySelect(){
+  const select = document.getElementById("categorySelect");
+  if(!select) return;
 
-  return [
-    ...manual,
-    ...auto.slice(0,3-manual.length)
-  ].slice(0,3);
+  select.innerHTML = `<option>全部</option><option>未分類</option>`;
+  state.categories.forEach(cat=>{
+    select.innerHTML += `<option>${cat.name}</option>`;
+  });
 }
 
-/* =============================
+window.changeCategory = function(){
+  state.currentCategory = document.getElementById("categorySelect").value;
+  renderTasks();
+};
+
+/* ==============================
+   Calendar (卡片式)
+============================== */
+
+function renderCalendar(){
+
+  const container = document.getElementById("calendarContainer");
+  container.innerHTML="";
+
+  const firstDay = new Date(state.currentYear,state.currentMonth,1).getDay();
+  const daysInMonth = new Date(state.currentYear,state.currentMonth+1,0).getDate();
+
+  for(let i=0;i<firstDay;i++){
+    container.innerHTML+=`<div class="calendar-cell empty"></div>`;
+  }
+
+  for(let d=1; d<=daysInMonth; d++){
+
+    const dateStr = `${state.currentYear}-${String(state.currentMonth+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    const hasTask = state.tasks.some(t=>t.dueDate===dateStr);
+
+    container.innerHTML+=`
+      <div class="calendar-cell ${hasTask?"has-task":""}"
+        onclick="selectDate('${dateStr}')">
+        ${d}
+      </div>
+    `;
+  }
+}
+
+window.selectDate = function(dateStr){
+  state.selectedDate = dateStr;
+  renderTasks();
+};
+
+/* ==============================
    Render
-============================= */
+============================== */
 
 function renderFocus(){
   const container = document.getElementById("focusContainer");
   container.innerHTML="";
 
   const focusTasks = getFocusTasks();
-
   if(focusTasks.length===0){
     container.innerHTML="<div class='empty'>今日沒有焦點</div>";
     return;
   }
 
   focusTasks.forEach(task=>{
-    container.innerHTML+=`
-      <div class="focus-item">
-        <span>${task.title}</span>
-      </div>
-    `;
+    container.innerHTML+=`<div class="focus-item">${task.title}</div>`;
   });
 }
 
@@ -213,212 +265,123 @@ function renderInbox(){
   const container = document.getElementById("inboxContainer");
   container.innerHTML="";
 
-  if(state.inbox.length===0){
-    container.innerHTML="<div class='empty'>目前沒有靈感</div>";
-    return;
-  }
-
-  state.inbox
-    .sort((a,b)=>(a.createdAt||0)-(b.createdAt||0))
-    .forEach(item=>{
-      container.innerHTML+=`
-        <div class="inbox-item">
-          <span>${item.content}</span>
-          <div class="inbox-actions">
-            <button onclick='convertInbox(${JSON.stringify(item)})'>加入</button>
-            <button onclick='deleteInbox("${item.id}")'>刪除</button>
-          </div>
-        </div>
-      `;
-    });
+  state.inbox.forEach(item=>{
+    container.innerHTML+=`
+      <div class="inbox-item">
+        ${item.content}
+        <button onclick='convertInbox(${JSON.stringify(item)})'>加入</button>
+      </div>
+    `;
+  });
 }
 
 function renderTasks(){
-  const container=document.getElementById("tasksContainer");
+  const container = document.getElementById("tasksContainer");
   container.innerHTML="";
 
-  state.tasks
-    .sort((a,b)=>{
-      if(a.completed!==b.completed) return a.completed-b.completed;
-      return (a.createdAt||0)-(b.createdAt||0);
-    })
-    .forEach(task=>{
+  let tasks = state.tasks;
 
-      const isStalled = !task.completed &&
-        (Date.now() - (task.updatedAt||task.createdAt||0))
-        > STAGNANT_DAYS*24*60*60*1000;
+  if(state.currentCategory !== "全部"){
+    tasks = tasks.filter(t=>t.category===state.currentCategory);
+  }
 
-      container.innerHTML+=`
-        <div class="task-item ${task.completed?"done":""}">
-          <div class="task-top">
-            <input type="checkbox"
-              ${task.completed?"checked":""}
-              onchange='toggleTask(${JSON.stringify(task)})'>
+  if(state.selectedDate){
+    tasks = tasks.filter(t=>t.dueDate===state.selectedDate);
+  }
 
-            <span class="task-title">${task.title}</span>
+  tasks.forEach(task=>{
+    container.innerHTML+=`
+      <div class="task-item">
+        <input type="checkbox"
+          ${task.completed?"checked":""}
+          onchange='toggleTask(${JSON.stringify(task)})'>
 
-            <span onclick='toggleFocusManual(${JSON.stringify(task)})'
-              class="star">
-              ${task.isFocusManual?"★":"☆"}
-            </span>
-          </div>
+        ${task.title}
 
-          <input class="next-input"
-            value="${task.nextStep||""}"
-            placeholder="下一步..."
-            onblur="updateNextStep('${task.id}',this.value)">
-
-          ${isStalled?"<div class='stalled'>建議補上下一步</div>":""}
-        </div>
-      `;
-    });
+        <span onclick='toggleFocusManual(${JSON.stringify(task)})'>
+          ${task.isFocusManual?"★":"☆"}
+        </span>
+      </div>
+    `;
+  });
 }
 
 function renderAll(){
   renderFocus();
-  renderInbox();
   renderTasks();
+  renderCalendar();
 }
 
-/* =============================
+/* ==============================
    Init
-============================= */
+============================== */
 
 loadTasks();
 loadInbox();
+loadCategories();
 
 </script>
 
 <style>
-
-/* ===== Base ===== */
-
 body{
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto;
-  background:#fafafa;
-  max-width:680px;
+  max-width:900px;
   margin:auto;
-  padding:40px 20px;
-  color:#111;
+  padding:30px;
+  background:#fafafa;
 }
 
-h3{
-  font-size:14px;
-  font-weight:600;
-  letter-spacing:1px;
-  text-transform:uppercase;
-  margin-bottom:12px;
-  color:#888;
-}
-
-input, select{
-  padding:10px 12px;
-  border:1px solid #e5e5e5;
-  border-radius:8px;
-  font-size:14px;
-  outline:none;
-}
-
-input:focus{
-  border-color:#999;
-}
-
-button{
-  border:none;
-  background:none;
-  cursor:pointer;
-  font-size:13px;
-  color:#666;
-}
-
-button:hover{
-  color:#000;
-}
-
-.empty{
-  color:#aaa;
-  font-size:13px;
-  padding:10px 0;
-}
-
-/* ===== Sections ===== */
-
-.section{
-  margin-bottom:40px;
-}
-
-/* ===== Focus ===== */
+.section{ margin-bottom:40px; }
 
 .focus-item{
-  padding:10px 14px;
   background:white;
+  padding:10px;
+  border-radius:8px;
+  margin-bottom:6px;
   border:1px solid #eee;
-  border-radius:10px;
-  margin-bottom:8px;
 }
 
-/* ===== Inbox ===== */
+.calendar{
+  display:grid;
+  grid-template-columns:repeat(7,1fr);
+  gap:6px;
+}
 
-.inbox-item{
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  padding:10px 14px;
+.calendar-cell{
   background:white;
+  padding:10px;
+  border-radius:6px;
+  text-align:center;
+  cursor:pointer;
   border:1px solid #eee;
-  border-radius:10px;
-  margin-bottom:8px;
 }
 
-.inbox-actions button{
-  margin-left:10px;
+.calendar-cell.has-task{
+  background:#e0f2ff;
 }
 
-/* ===== Tasks ===== */
+.calendar-cell.empty{
+  background:transparent;
+  border:none;
+}
 
 .task-item{
   background:white;
+  padding:10px;
+  border-radius:8px;
+  margin-bottom:8px;
   border:1px solid #eee;
-  border-radius:12px;
-  padding:14px;
-  margin-bottom:12px;
 }
 
-.task-item.done{
-  opacity:0.5;
+.inbox-item{
+  background:white;
+  padding:8px;
+  border-radius:6px;
+  margin-bottom:6px;
+  border:1px solid #eee;
 }
 
-.task-top{
-  display:flex;
-  align-items:center;
-  gap:10px;
-}
-
-.task-title{
-  flex:1;
-}
-
-.star{
-  cursor:pointer;
-  font-size:16px;
-  color:#999;
-}
-
-.star:hover{
-  color:#000;
-}
-
-.next-input{
-  width:100%;
-  margin-top:10px;
-}
-
-.stalled{
-  margin-top:6px;
-  font-size:12px;
-  color:#c98c00;
-}
-
+.empty{ color:#aaa; }
 </style>
 </head>
 
@@ -430,25 +393,41 @@ button:hover{
 </div>
 
 <div class="section">
+  <h3>分類</h3>
+  <select id="categorySelect" onchange="changeCategory()"></select>
+  <button onclick="addCategory()">新增分類</button>
+</div>
+
+<div class="section">
+  <h3>月曆</h3>
+  <div id="calendarContainer" class="calendar"></div>
+</div>
+
+<div class="section">
   <h3>InBox</h3>
   <input id="inboxInput"
-    placeholder="快速記錄靈感..."
+    placeholder="快速記錄..."
     onkeypress="if(event.key==='Enter') addInbox()">
   <div id="inboxContainer"></div>
 </div>
 
 <div class="section">
-  <h3>任務</h3>
-  <div style="display:flex; gap:10px; margin-bottom:12px;">
-    <input id="taskInput"
-      placeholder="新增任務..."
-      onkeypress="if(event.key==='Enter') addTask()">
-    <select id="prioritySelect">
-      <option value="高">高</option>
-      <option value="中" selected>中</option>
-      <option value="低">低</option>
-    </select>
-  </div>
+  <h3>新增任務</h3>
+  <input id="taskInput"
+    placeholder="任務內容..."
+    onkeypress="if(event.key==='Enter') addTask()">
+
+  <select id="prioritySelect">
+    <option value="高">高</option>
+    <option value="中" selected>中</option>
+    <option value="低">低</option>
+  </select>
+
+  <button onclick="addTask()">新增</button>
+</div>
+
+<div class="section">
+  <h3>任務列表</h3>
   <div id="tasksContainer"></div>
 </div>
 
